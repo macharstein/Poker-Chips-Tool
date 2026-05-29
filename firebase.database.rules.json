@@ -1,0 +1,40 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "roomCodes": {
+      "$code": {
+        ".read": "auth != null",
+        ".write": "auth != null && (!data.exists() || data.val() == newData.val())",
+        ".validate": "$code.matches(/^[A-Z2-9]{6,8}$/) && newData.isString()"
+      }
+    },
+    "rooms": {
+      "$roomId": {
+        ".read": "auth != null && (data.child('adminUid').val() == auth.uid || data.child('players').child(auth.uid).exists())",
+        ".write": "auth != null && ((!data.exists() && newData.child('adminUid').val() == auth.uid) || data.child('adminUid').val() == auth.uid || data.child('players').child(auth.uid).exists() || newData.child('players').child(auth.uid).exists())",
+        ".validate": "newData.hasChildren(['id', 'code', 'adminUid', 'status', 'version', 'settings', 'players'])",
+        "adminUid": {
+          ".validate": "newData.isString()"
+        },
+        "code": {
+          ".validate": "newData.isString() && newData.val().matches(/^[A-Z2-9]{6,8}$/)"
+        },
+        "status": {
+          ".validate": "newData.val() in ['lobby', 'active', 'paused', 'ended']"
+        },
+        "version": {
+          ".validate": "newData.isNumber() && newData.val() >= 0"
+        },
+        "settings": {
+          ".validate": "newData.hasChildren(['smallBlind', 'bigBlind', 'startingStack', 'blindIntervalMinutes', 'maxPlayers'])"
+        },
+        "players": {
+          "$playerId": {
+            ".validate": "newData.hasChildren(['id', 'name', 'seat', 'stack', 'status'])"
+          }
+        }
+      }
+    }
+  }
+}

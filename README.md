@@ -1,6 +1,6 @@
 # Pocket Poker Chips
 
-Pocket Poker Chips is an Expo + React Native app for tracking poker chip stacks in a shared room without physical chips. It supports local demo rooms out of the box and Firebase Realtime Database rooms when Firebase environment variables are configured.
+Pocket Poker Chips is an Expo + React Native app for tracking poker chip stacks in a shared room without physical chips. On web, configured Firebase projects default to host-run peer-to-peer rooms: Firebase stores the room code and WebRTC signaling only, while the host browser owns the poker room state.
 
 ## Run
 
@@ -65,9 +65,29 @@ EXPO_PUBLIC_FIREBASE_PROJECT_ID=...
 EXPO_PUBLIC_FIREBASE_APP_ID=...
 ```
 
-Without these values the app falls back to local demo mode. On web, local rooms are persisted in browser storage and broadcast across tabs in the same browser, which is useful for testing multiple players locally. Local mode does not sync across separate devices; use Firebase for that.
+Default transport behavior:
 
-Database rules live in `firebase.database.rules.json`. They are MVP rules: they enforce auth, room membership, and basic room shape. The client reducer still performs poker-rule validation. For competitive or public rooms, move the reducer into a trusted Cloud Function.
+```txt
+Web + Firebase configured: host-run P2P rooms
+Native + Firebase configured: full Firebase realtime rooms
+No Firebase config: local demo mode
+```
+
+To force the older full-Firebase room storage path for debugging, set:
+
+```bash
+EXPO_PUBLIC_ROOM_TRANSPORT=firebase
+```
+
+To force local demo mode:
+
+```bash
+EXPO_PUBLIC_ROOM_TRANSPORT=local
+```
+
+Without Firebase values the app falls back to local demo mode. On web, local rooms are persisted in browser storage and broadcast across tabs in the same browser, which is useful for testing multiple players locally. Local mode does not sync across separate devices.
+
+Database rules live in `firebase.database.rules.json`. The `p2pRooms` tree stores only room directory/signaling data. The older `rooms` and `roomCodes` trees remain for full-Firebase mode. The client reducer still performs poker-rule validation. For competitive or public rooms, move the reducer into a trusted Cloud Function.
 
 ## Product Scope
 
@@ -75,6 +95,7 @@ Implemented:
 
 - Create and join rooms by code
 - QR display and QR scanning
+- Host-run web rooms with Firebase-backed WebRTC signaling
 - Firebase Realtime Database repository with transaction-based actions
 - Local fallback repository
 - Lobby setup for stacks, blinds, blind interval, seats, and guest players

@@ -34,7 +34,9 @@ import {
   attachPresence,
   createShareValue,
   dispatchRoomAction,
+  leaveRoom,
   subscribeRoom,
+  type RoomRole,
   type TransportMode,
 } from '@/services/roomRepository';
 
@@ -53,10 +55,18 @@ export default function RoomScreen() {
     roomId?: string;
     playerId?: string;
     mode?: TransportMode;
+    code?: string;
+    role?: RoomRole;
+    peerId?: string;
+    hostPeerId?: string;
   }>();
   const roomId = firstParam(params.roomId);
   const actorId = firstParam(params.playerId);
-  const mode: TransportMode = firstParam(params.mode) === 'firebase' ? 'firebase' : 'local';
+  const mode = normalizeMode(firstParam(params.mode));
+  const role = normalizeRole(firstParam(params.role));
+  const code = firstParam(params.code);
+  const peerId = firstParam(params.peerId);
+  const hostPeerId = firstParam(params.hostPeerId);
   const [room, setRoom] = useState<RoomState | null>(null);
   const [error, setError] = useState('');
   const [busyAction, setBusyAction] = useState('');
@@ -75,7 +85,13 @@ export default function RoomScreen() {
       return;
     }
 
-    const subscription = subscribeRoom(roomId, mode, setRoom);
+    const subscription = subscribeRoom(roomId, mode, setRoom, {
+      actorId,
+      code,
+      role,
+      peerId,
+      hostPeerId,
+    });
     let detachPresence: (() => void) | undefined;
     let cancelled = false;
     if (actorId) {
@@ -95,7 +111,7 @@ export default function RoomScreen() {
       detachPresence?.();
       subscription.unsubscribe();
     };
-  }, [actorId, mode, roomId]);
+  }, [actorId, code, hostPeerId, mode, peerId, role, roomId]);
 
   const players = useMemo(() => (room ? getOrderedPlayers(room) : []), [room]);
   const isAdmin = Boolean(room && actorId && room.adminUid === actorId);
@@ -130,7 +146,9 @@ export default function RoomScreen() {
       body: 'Are you sure you want to leave the room?',
       confirmText: 'Leave room',
       danger: true,
-      onConfirm: () => router.replace('/'),
+      onConfirm: () => {
+        void leaveRoom({ roomId, mode }).finally(() => router.replace('/'));
+      },
     });
   };
 
@@ -217,7 +235,7 @@ export default function RoomScreen() {
               <View style={styles.roomTitleBlock}>
                 <Text style={styles.roomTitle}>Room {room.code}</Text>
                 <Text style={styles.roomSubtitle}>
-                  {mode === 'firebase' ? 'Realtime' : 'Local'} | v{room.version}
+                  {getModeLabel(mode)} | v{room.version}
                 </Text>
               </View>
               {isAdmin ? (
@@ -1345,6 +1363,30 @@ function EmptyState({
 
 function firstParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value ?? '';
+}
+
+function normalizeMode(value: string): TransportMode {
+  if (value === 'p2p' || value === 'firebase') {
+    return value;
+  }
+  return 'local';
+}
+
+function normalizeRole(value: string): RoomRole | undefined {
+  if (value === 'host' || value === 'guest') {
+    return value;
+  }
+  return undefined;
+}
+
+function getModeLabel(mode: TransportMode) {
+  if (mode === 'p2p') {
+    return 'Host-run';
+  }
+  if (mode === 'firebase') {
+    return 'Realtime';
+  }
+  return 'Local';
 }
 
 function toNumber(value: string, fallback: number) {

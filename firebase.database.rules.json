@@ -9,6 +9,67 @@
         ".validate": "$code.matches(/^[A-Z2-9]{6,8}$/) && newData.isString()"
       }
     },
+    "p2pRooms": {
+      "$code": {
+        ".read": "auth != null",
+        ".write": "auth != null && ((!data.exists() && newData.child('hostUid').val() == auth.uid) || data.child('hostUid').val() == auth.uid)",
+        ".validate": "$code.matches(/^[A-Z2-9]{6,8}$/) && newData.hasChildren(['roomId', 'code', 'hostUid', 'hostPeerId', 'hostName', 'status', 'createdAt', 'heartbeatAt', 'expiresAt'])",
+        "code": {
+          ".validate": "newData.isString() && newData.val() == $code"
+        },
+        "roomId": {
+          ".validate": "newData.isString()"
+        },
+        "hostUid": {
+          ".validate": "newData.isString()"
+        },
+        "hostPeerId": {
+          ".validate": "newData.isString()"
+        },
+        "hostName": {
+          ".validate": "newData.isString()"
+        },
+        "status": {
+          ".validate": "newData.val() in ['active', 'stale', 'closed']"
+        },
+        "createdAt": {
+          ".validate": "newData.isNumber()"
+        },
+        "heartbeatAt": {
+          ".validate": "newData.isNumber() || newData.val() == now"
+        },
+        "expiresAt": {
+          ".validate": "newData.isNumber()"
+        },
+        "peers": {
+          "$peerId": {
+            ".write": "auth != null && (root.child('p2pRooms').child($code).child('hostUid').val() == auth.uid || (!data.exists() && newData.child('uid').val() == auth.uid) || data.child('uid').val() == auth.uid)",
+            ".validate": "newData.hasChildren(['id', 'uid', 'playerId', 'name', 'status', 'createdAt', 'lastSeenAt'])",
+            "id": {
+              ".validate": "newData.isString() && newData.val() == $peerId"
+            },
+            "uid": {
+              ".validate": "newData.isString()"
+            },
+            "playerId": {
+              ".validate": "newData.isString()"
+            },
+            "name": {
+              ".validate": "newData.isString()"
+            },
+            "status": {
+              ".validate": "newData.val() in ['joining', 'connected', 'disconnected']"
+            },
+            "createdAt": {
+              ".validate": "newData.isNumber()"
+            },
+            "lastSeenAt": {
+              ".validate": "newData.isNumber() || newData.val() == now"
+            }
+          }
+        }
+      }
+    },
     "rooms": {
       "$roomId": {
         ".read": "auth != null && (data.child('adminUid').val() == auth.uid || data.child('players').child(auth.uid).exists())",

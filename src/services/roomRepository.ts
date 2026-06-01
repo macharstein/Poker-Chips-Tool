@@ -19,14 +19,28 @@ import {
   type RoomSettings,
   type RoomState,
 } from '@/domain/poker';
+import {
+  canUseHostedRooms,
+  createHostedRoom,
+  dispatchHostedAction,
+  joinHostedRoom,
+  leaveHostedRoom,
+  subscribeHostedRoom,
+  type HostedRoomRole,
+  type HostedRoomSubscribeContext,
+} from '@/services/hostedRoomService';
 
-export type TransportMode = 'firebase' | 'local';
+export type TransportMode = 'p2p' | 'firebase' | 'local';
+export type RoomRole = HostedRoomRole;
 
 export type RoomSession = {
   roomId: string;
   code: string;
   playerId: string;
   mode: TransportMode;
+  role?: RoomRole;
+  peerId?: string;
+  hostPeerId?: string;
 };
 
 export type RoomSubscription = {
@@ -62,9 +76,13 @@ export function getFirebaseConfigStatus() {
   const missing = Object.entries(config)
     .filter(([, value]) => !value)
     .map(([key]) => key);
+  const configured = missing.length === 0;
+  const defaultMode = configured ? getOnlineTransportMode() : 'local';
   return {
-    configured: missing.length === 0,
+    configured,
     missing,
+    defaultMode,
+    label: getTransportLabel(defaultMode),
   };
 }
 
@@ -73,6 +91,18 @@ export async function createRoom(params: {
   settings?: Partial<RoomSettings>;
 }): Promise<RoomSession> {
   if (getFirebaseConfigStatus().configured) {
+    const onlineMode = getOnlineTransportMode();
+    if (onlineMode === 'local') {
+      return createLocalRoom(params);
+    }
+    if (onlineMode === 'p2p') {
+      return createHostedRoom({
+        adminName: params.adminName,
+        settings: params.settings,
+        database: getDatabase(getFirebaseApp()),
+        getUserId: getFirebaseUserId,
+      });
+    }
     return createFirebaseRoom(params);
   }
   return createLocalRoom(params);
@@ -80,6 +110,18 @@ export async function createRoom(params: {
 
 export async function joinRoom(params: { code: string; playerName: string }): Promise<RoomSession> {
   if (getFirebaseConfigStatus().configured) {
+    const onlineMode = getOnlineTransportMode();
+    if (onlineMode === 'local') {
+      return joinLocalRoom(params);
+    }
+    if (onlineMode === 'p2p') {
+      return joinHostedRoom({
+        code: params.code,
+        playerName: params.playerName,
+        database: getDatabase(getFirebaseApp()),
+        getUserId: getFirebaseUserId,
+      });
+    }
     return joinFirebaseRoom(params);
   }
   return joinLocalRoom(params);
@@ -88,8 +130,19 @@ export async function joinRoom(params: { code: string; playerName: string }): Pr
 export function subscribeRoom(
   roomId: string,
   mode: TransportMode,
-  onRoom: (room: RoomState | null) => void
+  onRoom: (room: RoomState | null) => void,
+  context?: HostedRoomSubscribeContext
 ): RoomSubscription {
+  if (mode === 'p2p') {
+    return subscribeHostedRoom({
+      roomId,
+      database: getDatabase(getFirebaseApp()),
+      getUserId: getFirebaseUserId,
+      context,
+      onRoom,
+    });
+  }
+
   if (mode === 'firebase') {
     const database = getDatabase(getFirebaseApp());
     const unsubscribe = onValue(ref(database, `rooms/${roomId}`), (snapshot) => {
@@ -115,6 +168,14 @@ export async function dispatchRoomAction(params: {
   actorId: string;
   action: PokerAction;
 }) {
+  if (params.mode === 'p2p') {
+    return dispatchHostedAction({
+      roomId: params.roomId,
+      actorId: params.actorId,
+      action: params.action,
+    });
+  }
+
   if (params.mode === 'firebase') {
     const database = getDatabase(getFirebaseApp());
     const roomRef = ref(database, `rooms/${params.roomId}`);
@@ -155,6 +216,12 @@ export async function dispatchRoomAction(params: {
   emitLocalRoom(params.roomId);
 }
 
+export async function leaveRoom(params: { roomId: string; mode: TransportMode }) {
+  if (params.mode === 'p2p') {
+    await leaveHostedRoom({ roomId: params.roomId });
+  }
+}
+
 export async function attachPresence(params: {
   roomId: string;
   playerId: string;
@@ -175,6 +242,12 @@ export async function attachPresence(params: {
 }
 
 export function createShareValue(code: string) {
+  if (isWebRuntime() && window.location?.origin) {
+    const basePath = window.location.pathname.startsWith('/Poker-Chips-Tool')
+      ? '/Poker-Chips-Tool/'
+      : '/';
+    return `${window.location.origin}${basePath}?code=${encodeURIComponent(code)}`;
+  }
   return `pokerchipstool://join?code=${encodeURIComponent(code)}`;
 }
 
@@ -317,6 +390,31 @@ function readFirebaseConfig(): FirebaseConfig {
 
 function hasConfig(config: FirebaseConfig) {
   return Object.values(config).every(Boolean);
+}
+
+function getOnlineTransportMode(): TransportMode {
+  const forced = process.env.EXPO_PUBLIC_ROOM_TRANSPORT?.toLowerCase();
+  if (forced === 'firebase') {
+    return 'firebase';
+  }
+  if (forced === 'local') {
+    return 'local';
+  }
+  if (forced === 'p2p' && !canUseHostedRooms()) {
+    return 'firebase';
+  }
+  return canUseHostedRooms() ? 'p2p' : 'firebase';
+}
+
+function getTransportLabel(mode: TransportMode) {
+  switch (mode) {
+    case 'p2p':
+      return 'Host-run P2P rooms';
+    case 'firebase':
+      return 'Firebase realtime rooms';
+    case 'local':
+      return 'Local demo mode';
+  }
 }
 
 function createLocalPlayerId() {

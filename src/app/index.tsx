@@ -41,7 +41,15 @@ export default function EntryScreen() {
   const openRoom = (session: RoomSession) => {
     router.push({
       pathname: '/room/[roomId]',
-      params: { roomId: session.roomId, playerId: session.playerId, mode: session.mode },
+      params: {
+        roomId: session.roomId,
+        playerId: session.playerId,
+        mode: session.mode,
+        code: session.code,
+        role: session.role,
+        peerId: session.peerId,
+        hostPeerId: session.hostPeerId,
+      },
     });
   };
 
@@ -104,9 +112,7 @@ export default function EntryScreen() {
 
             <View style={styles.statusStrip}>
               <View style={[styles.statusDot, configStatus.configured && styles.statusDotLive]} />
-              <Text style={styles.statusText}>
-                {configStatus.configured ? 'Firebase realtime rooms' : 'Local demo mode'}
-              </Text>
+              <Text style={styles.statusText}>{configStatus.label}</Text>
             </View>
 
             <View style={styles.panel}>

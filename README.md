@@ -15,9 +15,41 @@ Useful targets:
 npm run ios
 npm run android
 npm run web
+npm run build:web
 npm run lint
-npx tsc --noEmit
+npm run typecheck
 ```
+
+## Deploy to GitHub Pages
+
+This repository is configured for GitHub Pages at:
+
+```txt
+https://macharstein.github.io/Poker-Chips-Tool/
+```
+
+The app uses Expo web export with `experiments.baseUrl` set to `/Poker-Chips-Tool`, which matches the GitHub repository path.
+
+To publish:
+
+1. Push the project to the `main` branch on `macharstein/Poker-Chips-Tool`.
+2. In GitHub, open `Settings > Pages`.
+3. Under `Build and deployment`, set `Source` to `GitHub Actions`.
+4. Push to `main`, or manually run the `Deploy Web` workflow from the `Actions` tab.
+
+The workflow runs typecheck, lint, exports the web build to `dist`, and deploys that artifact to GitHub Pages.
+
+For real multiplayer on the published website, add these repository secrets in `Settings > Secrets and variables > Actions`:
+
+```txt
+EXPO_PUBLIC_FIREBASE_API_KEY
+EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN
+EXPO_PUBLIC_FIREBASE_DATABASE_URL
+EXPO_PUBLIC_FIREBASE_PROJECT_ID
+EXPO_PUBLIC_FIREBASE_APP_ID
+```
+
+If these are missing, the published site still loads but uses local demo mode, which does not sync rooms across different devices.
 
 ## Firebase Setup
 
@@ -46,12 +78,15 @@ Implemented:
 - Lobby setup for stacks, blinds, blind interval, seats, and guest players
 - Table view with pot, current bet, active turn, stacks, dealer/SB/BB markers
 - Player actions: fold, check/call, raise-to, show
+- Player status modal from Show
 - Admin controls: undo, pause/resume, end hand, award pot, adjust stacks, set dealer, set active player, force fold/check-call
+- Community-card stage indicator
+- Showdown pot resolution with side-pot-style winner selection
+- Hand strength guide
 - Pure TypeScript poker reducer
 
 Deferred:
 
-- Automated side-pot settlement
 - Blind timer automation
 - Admin transfer
 - Bluetooth/local mesh mode

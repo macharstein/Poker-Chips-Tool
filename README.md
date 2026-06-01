@@ -39,6 +39,8 @@ To publish:
 
 The workflow runs typecheck, lint, exports the web build to `dist`, and deploys that artifact to GitHub Pages.
 
+If the public URL shows this README instead of the app, GitHub Pages is still set to `Deploy from a branch`. Change `Settings > Pages > Build and deployment > Source` to `GitHub Actions`, then rerun the `Deploy Web` workflow.
+
 For real multiplayer on the published website, add these repository secrets in `Settings > Secrets and variables > Actions`:
 
 ```txt

@@ -28,6 +28,7 @@ jobs:
       EXPO_PUBLIC_FIREBASE_DATABASE_URL: ${{ secrets.EXPO_PUBLIC_FIREBASE_DATABASE_URL }}
       EXPO_PUBLIC_FIREBASE_PROJECT_ID: ${{ secrets.EXPO_PUBLIC_FIREBASE_PROJECT_ID }}
       EXPO_PUBLIC_FIREBASE_APP_ID: ${{ secrets.EXPO_PUBLIC_FIREBASE_APP_ID }}
+      EXPO_PUBLIC_ROOM_TRANSPORT: ${{ secrets.EXPO_PUBLIC_ROOM_TRANSPORT }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -40,6 +41,31 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Verify hosted-room Firebase config
+        run: |
+          if [ "$EXPO_PUBLIC_ROOM_TRANSPORT" = "local" ]; then
+            echo "Local demo mode explicitly requested; skipping Firebase config check."
+            exit 0
+          fi
+
+          missing=""
+          for name in \
+            EXPO_PUBLIC_FIREBASE_API_KEY \
+            EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN \
+            EXPO_PUBLIC_FIREBASE_DATABASE_URL \
+            EXPO_PUBLIC_FIREBASE_PROJECT_ID \
+            EXPO_PUBLIC_FIREBASE_APP_ID
+          do
+            if [ -z "${!name}" ]; then
+              missing="$missing $name"
+            fi
+          done
+
+          if [ -n "$missing" ]; then
+            echo "::error::Missing Firebase GitHub Actions secrets:$missing"
+            exit 1
+          fi
 
       - name: Typecheck
         run: npm run typecheck

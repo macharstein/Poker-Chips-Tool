@@ -77,12 +77,13 @@ export function getFirebaseConfigStatus() {
     .filter(([, value]) => !value)
     .map(([key]) => key);
   const configured = missing.length === 0;
-  const defaultMode = configured ? getOnlineTransportMode() : 'local';
+  const defaultMode = configured ? getOnlineTransportMode() : isLocalTransportForced() ? 'local' : 'p2p';
   return {
     configured,
     missing,
+    canCreateRooms: configured || isLocalTransportForced(),
     defaultMode,
-    label: getTransportLabel(defaultMode),
+    label: configured || isLocalTransportForced() ? getTransportLabel(defaultMode) : 'Firebase setup required',
   };
 }
 
@@ -90,7 +91,15 @@ export async function createRoom(params: {
   adminName: string;
   settings?: Partial<RoomSettings>;
 }): Promise<RoomSession> {
-  if (getFirebaseConfigStatus().configured) {
+  const configStatus = getFirebaseConfigStatus();
+  if (!configStatus.configured) {
+    if (isLocalTransportForced()) {
+      return createLocalRoom(params);
+    }
+    throw new Error(createMissingFirebaseConfigMessage(configStatus.missing));
+  }
+
+  if (configStatus.configured) {
     const onlineMode = getOnlineTransportMode();
     if (onlineMode === 'local') {
       return createLocalRoom(params);
@@ -109,7 +118,15 @@ export async function createRoom(params: {
 }
 
 export async function joinRoom(params: { code: string; playerName: string }): Promise<RoomSession> {
-  if (getFirebaseConfigStatus().configured) {
+  const configStatus = getFirebaseConfigStatus();
+  if (!configStatus.configured) {
+    if (isLocalTransportForced()) {
+      return joinLocalRoom(params);
+    }
+    throw new Error(createMissingFirebaseConfigMessage(configStatus.missing));
+  }
+
+  if (configStatus.configured) {
     const onlineMode = getOnlineTransportMode();
     if (onlineMode === 'local') {
       return joinLocalRoom(params);
@@ -393,7 +410,7 @@ function hasConfig(config: FirebaseConfig) {
 }
 
 function getOnlineTransportMode(): TransportMode {
-  const forced = process.env.EXPO_PUBLIC_ROOM_TRANSPORT?.toLowerCase();
+  const forced = getForcedTransportMode();
   if (forced === 'firebase') {
     return 'firebase';
   }
@@ -404,6 +421,20 @@ function getOnlineTransportMode(): TransportMode {
     return 'firebase';
   }
   return canUseHostedRooms() ? 'p2p' : 'firebase';
+}
+
+function getForcedTransportMode() {
+  return process.env.EXPO_PUBLIC_ROOM_TRANSPORT?.toLowerCase();
+}
+
+function isLocalTransportForced() {
+  return getForcedTransportMode() === 'local';
+}
+
+function createMissingFirebaseConfigMessage(missing: string[]) {
+  return `Firebase is not configured for shared rooms. Add these Expo public Firebase values before creating rooms: ${missing.join(
+    ', '
+  )}. For a browser-only demo, set EXPO_PUBLIC_ROOM_TRANSPORT=local.`;
 }
 
 function getTransportLabel(mode: TransportMode) {

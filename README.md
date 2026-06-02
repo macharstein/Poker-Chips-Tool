@@ -51,7 +51,7 @@ EXPO_PUBLIC_FIREBASE_PROJECT_ID
 EXPO_PUBLIC_FIREBASE_APP_ID
 ```
 
-If these are missing, the published site still loads but uses local demo mode, which does not sync rooms across different devices.
+If these are missing, the GitHub Pages workflow fails instead of publishing a browser-only local demo by accident.
 
 ## Firebase Setup
 
@@ -70,7 +70,7 @@ Default transport behavior:
 ```txt
 Web + Firebase configured: host-run P2P rooms
 Native + Firebase configured: full Firebase realtime rooms
-No Firebase config: local demo mode
+No Firebase config: room creation is blocked
 ```
 
 To force the older full-Firebase room storage path for debugging, set:
@@ -85,7 +85,7 @@ To force local demo mode:
 EXPO_PUBLIC_ROOM_TRANSPORT=local
 ```
 
-Without Firebase values the app falls back to local demo mode. On web, local rooms are persisted in browser storage and broadcast across tabs in the same browser, which is useful for testing multiple players locally. Local mode does not sync across separate devices.
+Without Firebase values, room creation is blocked so you do not accidentally publish a local-only build. On web, local rooms are still available only when `EXPO_PUBLIC_ROOM_TRANSPORT=local` is set. Local rooms are persisted in browser storage and broadcast across tabs in the same browser, which is useful for testing multiple players locally. Local mode does not sync across separate devices.
 
 Database rules live in `firebase.database.rules.json`. The `p2pRooms` tree stores only room directory/signaling data. The older `rooms` and `roomCodes` trees remain for full-Firebase mode. The client reducer still performs poker-rule validation. For competitive or public rooms, move the reducer into a trusted Cloud Function.
 

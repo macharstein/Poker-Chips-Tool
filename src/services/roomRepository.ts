@@ -420,7 +420,10 @@ function getOnlineTransportMode(): TransportMode {
   if (forced === 'p2p' && !canUseHostedRooms()) {
     return 'firebase';
   }
-  return canUseHostedRooms() ? 'p2p' : 'firebase';
+  if (forced === 'p2p') {
+    return 'p2p';
+  }
+  return 'firebase';
 }
 
 function getForcedTransportMode() {

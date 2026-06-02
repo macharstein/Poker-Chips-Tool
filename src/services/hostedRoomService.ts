@@ -164,9 +164,7 @@ const ROOM_TTL_MS = 45_000;
 const GUEST_STALE_AFTER_MS = 25_000;
 const FIREBASE_OPERATION_TIMEOUT_MS = 15_000;
 const HOSTED_STATE_KEY = 'pocket-poker-chips.hosted-state.v1';
-const PEER_CONFIGURATION: RTCConfiguration = {
-  iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-};
+const DEFAULT_STUN_URL = 'stun:stun.l.google.com:19302';
 
 const hostRuntimes: Record<string, HostRuntime> = {};
 const guestRuntimes: Record<string, GuestRuntime> = {};
@@ -474,7 +472,7 @@ async function startHostSignaling(runtime: HostRuntime) {
 }
 
 async function answerPeerOffer(runtime: HostRuntime, peerId: string, peer: HostedPeerSignal) {
-  const pc = new RTCPeerConnection(PEER_CONFIGURATION);
+  const pc = new RTCPeerConnection(createPeerConfiguration());
   const peerConnection: HostPeerConnection = {
     pc,
     seenCandidateIds: new Set(),
@@ -599,7 +597,7 @@ async function createGuestRuntime(params: {
   peerId: string;
   playerName: string;
 }): Promise<GuestRuntime> {
-  const pc = new RTCPeerConnection(PEER_CONFIGURATION);
+  const pc = new RTCPeerConnection(createPeerConfiguration());
   const channel = pc.createDataChannel('pocket-poker-chips');
   const runtime: GuestRuntime = {
     role: 'guest',
@@ -954,6 +952,21 @@ function requireHostedSupport() {
   if (!canUseHostedRooms()) {
     throw new Error('Host-run web rooms need a browser with WebRTC support.');
   }
+}
+
+function createPeerConfiguration(): RTCConfiguration {
+  const iceServers: RTCIceServer[] = [
+    { urls: process.env.EXPO_PUBLIC_WEBRTC_STUN_URL || DEFAULT_STUN_URL },
+  ];
+  const turnUrl = process.env.EXPO_PUBLIC_WEBRTC_TURN_URL;
+  if (turnUrl) {
+    iceServers.push({
+      urls: turnUrl,
+      username: process.env.EXPO_PUBLIC_WEBRTC_TURN_USERNAME,
+      credential: process.env.EXPO_PUBLIC_WEBRTC_TURN_CREDENTIAL,
+    });
+  }
+  return { iceServers };
 }
 
 function withTimeout<T>(promise: Promise<T>, message: string, timeoutMs = FIREBASE_OPERATION_TIMEOUT_MS) {

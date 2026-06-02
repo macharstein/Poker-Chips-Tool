@@ -1,6 +1,6 @@
 # Pocket Poker Chips
 
-Pocket Poker Chips is an Expo + React Native app for tracking poker chip stacks in a shared room without physical chips. On web, configured Firebase projects default to host-run peer-to-peer rooms: Firebase stores the room code and WebRTC signaling only, while the host browser owns the poker room state.
+Pocket Poker Chips is an Expo + React Native app for tracking poker chip stacks in a shared room without physical chips. Configured Firebase projects default to Firebase Realtime Database rooms so players can join reliably from different networks.
 
 ## Run
 
@@ -68,15 +68,23 @@ EXPO_PUBLIC_FIREBASE_APP_ID=...
 Default transport behavior:
 
 ```txt
-Web + Firebase configured: host-run P2P rooms
-Native + Firebase configured: full Firebase realtime rooms
+Firebase configured: Firebase realtime rooms
 No Firebase config: room creation is blocked
 ```
 
-To force the older full-Firebase room storage path for debugging, set:
+Firebase realtime rooms are the recommended public-web default because they work across different home, mobile, campus, and office networks. Host-run P2P rooms are still available for experimentation:
 
 ```bash
-EXPO_PUBLIC_ROOM_TRANSPORT=firebase
+EXPO_PUBLIC_ROOM_TRANSPORT=p2p
+```
+
+P2P mode uses WebRTC. It can work with only STUN on friendly networks, but restrictive NATs usually need a TURN relay server. Optional WebRTC relay variables:
+
+```bash
+EXPO_PUBLIC_WEBRTC_STUN_URL=stun:stun.l.google.com:19302
+EXPO_PUBLIC_WEBRTC_TURN_URL=turn:your-turn-server.example.com:3478
+EXPO_PUBLIC_WEBRTC_TURN_USERNAME=...
+EXPO_PUBLIC_WEBRTC_TURN_CREDENTIAL=...
 ```
 
 To force local demo mode:
@@ -95,8 +103,8 @@ Implemented:
 
 - Create and join rooms by code
 - QR display and QR scanning
-- Host-run web rooms with Firebase-backed WebRTC signaling
 - Firebase Realtime Database repository with transaction-based actions
+- Optional host-run web rooms with Firebase-backed WebRTC signaling
 - Local fallback repository
 - Lobby setup for stacks, blinds, blind interval, seats, and guest players
 - Table view with pot, current bet, active turn, stacks, dealer/SB/BB markers

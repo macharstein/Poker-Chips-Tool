@@ -341,7 +341,11 @@ function joinRoom(room: RoomState, action: Extract<PokerAction, { type: 'JOIN_RO
   if (room.players[action.playerId]) {
     room.players[action.playerId].name = sanitizeName(action.name);
     room.players[action.playerId].lastSeenAt = now;
-    room.players[action.playerId].deviceId = action.deviceId;
+    if (action.deviceId) {
+      room.players[action.playerId].deviceId = action.deviceId;
+    } else {
+      delete room.players[action.playerId].deviceId;
+    }
     return;
   }
 

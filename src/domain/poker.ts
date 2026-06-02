@@ -687,17 +687,26 @@ function commit(
   }
   const sequenceNumber = room.version;
   const id = String(sequenceNumber).padStart(6, '0');
-  room.events[id] = {
+  const event: RoomEvent = {
     id,
-    handId: room.hand?.id,
     type: action.type,
-    playerId: 'playerId' in action ? action.playerId : undefined,
     actorId,
-    amount: 'amount' in action ? action.amount : undefined,
-    note: 'note' in action ? action.note : undefined,
     createdAt: now,
     sequenceNumber,
   };
+  if (room.hand?.id) {
+    event.handId = room.hand.id;
+  }
+  if ('playerId' in action) {
+    event.playerId = action.playerId;
+  }
+  if ('amount' in action && action.amount !== undefined) {
+    event.amount = action.amount;
+  }
+  if ('note' in action && action.note) {
+    event.note = action.note;
+  }
+  room.events[id] = event;
   return room;
 }
 
@@ -706,12 +715,15 @@ function shouldSnapshot(action: PokerAction) {
 }
 
 function createSnapshot(room: RoomState): RoomSnapshot {
-  return {
+  const snapshot: RoomSnapshot = {
     players: clone(room.players),
     settings: clone(room.settings),
-    hand: clone(room.hand),
     status: room.status,
   };
+  if (room.hand) {
+    snapshot.hand = clone(room.hand);
+  }
+  return snapshot;
 }
 
 function createPlayer(params: {
@@ -722,7 +734,7 @@ function createPlayer(params: {
   now: number;
   deviceId?: string;
 }): Player {
-  return {
+  const player: Player = {
     id: params.id,
     name: sanitizeName(params.name),
     seat: params.seat,
@@ -731,8 +743,11 @@ function createPlayer(params: {
     committedThisStreet: 0,
     committedThisHand: 0,
     lastSeenAt: params.now,
-    deviceId: params.deviceId,
   };
+  if (params.deviceId) {
+    player.deviceId = params.deviceId;
+  }
+  return player;
 }
 
 function normalizeSettings(settings: RoomSettings): RoomSettings {

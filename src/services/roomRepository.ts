@@ -205,7 +205,9 @@ export async function dispatchRoomAction(params: {
           return undefined;
         }
         try {
-          return applyPokerAction(current, params.action, { actorId: params.actorId });
+          return stripUndefined(
+            applyPokerAction(current, params.action, { actorId: params.actorId })
+          ) as RoomState;
         } catch (error) {
           actionError = error instanceof Error ? error : new Error('Action rejected.');
           return undefined;
@@ -299,7 +301,7 @@ async function createFirebaseRoom(params: {
     settings: params.settings,
   });
 
-  await set(ref(database, `rooms/${roomId}`), room);
+  await set(ref(database, `rooms/${roomId}`), stripUndefined(room));
   await set(ref(database, `roomCodes/${code}`), roomId);
   return { roomId, code, playerId: userId, mode: 'firebase' };
 }
@@ -582,4 +584,18 @@ function isWebRuntime() {
 
 function clone<T>(value: T): T {
   return value == null ? value : JSON.parse(JSON.stringify(value));
+}
+
+function stripUndefined(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(stripUndefined);
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([, entryValue]) => entryValue !== undefined)
+        .map(([key, entryValue]) => [key, stripUndefined(entryValue)])
+    );
+  }
+  return value;
 }

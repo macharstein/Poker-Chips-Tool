@@ -95,7 +95,7 @@ EXPO_PUBLIC_ROOM_TRANSPORT=local
 
 Without Firebase values, room creation is blocked so you do not accidentally publish a local-only build. On web, local rooms are still available only when `EXPO_PUBLIC_ROOM_TRANSPORT=local` is set. Local rooms are persisted in browser storage and broadcast across tabs in the same browser, which is useful for testing multiple players locally. Local mode does not sync across separate devices.
 
-Database rules live in `firebase.database.rules.json`. Publish those rules in the Firebase console after changing them; GitHub Pages deploys the website, but it does not automatically update Realtime Database rules. The `rooms` and `roomCodes` trees power the default Firebase realtime mode, and `p2pRooms` stores only room directory/signaling data for optional P2P mode. The client reducer still performs poker-rule validation. For competitive or public rooms, move the reducer into a trusted Cloud Function.
+Database rules live in `firebase.database.rules.json`. Publish those rules in the Firebase console after changing them; GitHub Pages deploys the website, but it does not automatically update Realtime Database rules. The `rooms` and `roomCodes` trees power the default Firebase realtime mode, and `p2pRooms` stores only room directory/signaling data for optional P2P mode. The app opportunistically deletes rooms after one hour without a room heartbeat or game action; this runs when someone opens, creates, or joins a room. The client reducer still performs poker-rule validation. For competitive or public rooms, move the reducer and scheduled cleanup into trusted Cloud Functions.
 
 ## Product Scope
 

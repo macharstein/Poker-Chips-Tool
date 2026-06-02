@@ -5,14 +5,14 @@
     "roomCodes": {
       "$code": {
         ".read": "auth != null",
-        ".write": "auth != null && (!data.exists() || data.val() == newData.val())",
+        ".write": "auth != null && ((!data.exists() && newData.exists()) || data.val() == newData.val() || (!newData.exists() && (!root.child('rooms').child(data.val()).exists() || (root.child('rooms').child(data.val()).child('updatedAt').isNumber() && root.child('rooms').child(data.val()).child('updatedAt').val() <= now - 3600000))))",
         ".validate": "$code.matches(/^[A-Z2-9]{6,8}$/) && newData.isString()"
       }
     },
     "p2pRooms": {
       "$code": {
         ".read": "auth != null",
-        ".write": "auth != null && ((!data.exists() && newData.child('hostUid').val() == auth.uid) || data.child('hostUid').val() == auth.uid)",
+        ".write": "auth != null && ((!data.exists() && newData.child('hostUid').val() == auth.uid) || data.child('hostUid').val() == auth.uid || (!newData.exists() && data.child('expiresAt').isNumber() && data.child('expiresAt').val() <= now))",
         ".validate": "$code.matches(/^[A-Z2-9]{6,8}$/) && newData.hasChildren(['roomId', 'code', 'hostUid', 'hostPeerId', 'hostName', 'status', 'createdAt', 'heartbeatAt', 'expiresAt'])",
         "code": {
           ".validate": "newData.isString() && newData.val() == $code"
@@ -72,8 +72,8 @@
     },
     "rooms": {
       "$roomId": {
-        ".read": "auth != null && (data.child('adminUid').val() == auth.uid || data.child('players').child(auth.uid).exists() || data.child('status').val() == 'lobby')",
-        ".write": "auth != null && ((!data.exists() && newData.child('adminUid').val() == auth.uid) || data.child('adminUid').val() == auth.uid || data.child('players').child(auth.uid).exists() || newData.child('players').child(auth.uid).exists())",
+        ".read": "auth != null && (!data.exists() || data.child('adminUid').val() == auth.uid || data.child('players').child(auth.uid).exists() || data.child('status').val() == 'lobby' || (data.child('updatedAt').isNumber() && data.child('updatedAt').val() <= now - 3600000))",
+        ".write": "auth != null && ((!data.exists() && newData.child('adminUid').val() == auth.uid) || (!newData.exists() && data.child('updatedAt').isNumber() && data.child('updatedAt').val() <= now - 3600000) || data.child('adminUid').val() == auth.uid || data.child('players').child(auth.uid).exists() || newData.child('players').child(auth.uid).exists())",
         ".validate": "newData.hasChildren(['id', 'code', 'adminUid', 'status', 'version', 'settings', 'players'])",
         "adminUid": {
           ".validate": "newData.isString()"

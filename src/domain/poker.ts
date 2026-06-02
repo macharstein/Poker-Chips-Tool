@@ -165,12 +165,14 @@ export function createRoomState(params: {
 }
 
 export function applyPokerAction(room: RoomState, action: PokerAction, options: ApplyOptions) {
+  const base = normalizeRoomState(room);
+
   if (action.type === 'ADMIN_UNDO') {
-    return undoLastAction(room, action, options);
+    return undoLastAction(base, action, options);
   }
 
   const now = options.now ?? Date.now();
-  const next = cloneRoom(room);
+  const next = cloneRoom(base);
   const snapshot = createSnapshot(next);
 
   switch (action.type) {
@@ -684,6 +686,8 @@ function commit(
   snapshot: RoomSnapshot | undefined,
   now: number
 ) {
+  room.events ??= {};
+  room.undoStack ??= [];
   room.version += 1;
   room.updatedAt = now;
   if (snapshot && shouldSnapshot(action)) {
@@ -768,6 +772,45 @@ function normalizeSettings(settings: RoomSettings): RoomSettings {
     minRaise: bigBlind,
     maxPlayers: Math.max(2, Math.floor(settings.maxPlayers)),
   };
+}
+
+function normalizeRoomState(room: RoomState): RoomState {
+  const normalized = cloneRoom(room);
+  normalized.status ??= 'lobby';
+  normalized.version = Number.isFinite(normalized.version) ? normalized.version : 0;
+  normalized.createdAt = Number.isFinite(normalized.createdAt) ? normalized.createdAt : Date.now();
+  normalized.updatedAt = Number.isFinite(normalized.updatedAt) ? normalized.updatedAt : normalized.createdAt;
+  normalized.settings = normalizeSettings({ ...DEFAULT_SETTINGS, ...normalized.settings });
+  normalized.players ??= {};
+  normalized.events ??= {};
+  normalized.undoStack = Array.isArray(normalized.undoStack) ? normalized.undoStack : [];
+
+  Object.values(normalized.players).forEach((player, index) => {
+    player.name = sanitizeName(player.name ?? 'Player');
+    player.seat = Number.isFinite(player.seat) ? player.seat : index;
+    player.stack = Number.isFinite(player.stack) ? player.stack : normalized.settings.startingStack;
+    player.status ??= 'active';
+    player.committedThisStreet = Number.isFinite(player.committedThisStreet)
+      ? player.committedThisStreet
+      : 0;
+    player.committedThisHand = Number.isFinite(player.committedThisHand) ? player.committedThisHand : 0;
+    player.lastSeenAt = Number.isFinite(player.lastSeenAt) ? player.lastSeenAt : normalized.updatedAt;
+  });
+
+  if (normalized.hand) {
+    normalized.hand.currentBet = Number.isFinite(normalized.hand.currentBet)
+      ? normalized.hand.currentBet
+      : 0;
+    normalized.hand.minRaise = Number.isFinite(normalized.hand.minRaise)
+      ? normalized.hand.minRaise
+      : normalized.settings.bigBlind;
+    normalized.hand.pot = Number.isFinite(normalized.hand.pot) ? normalized.hand.pot : 0;
+    normalized.hand.actedThisStreet ??= {};
+    normalized.hand.lastAggressorPlayerId ??= null;
+    normalized.hand.activePlayerId ??= null;
+  }
+
+  return normalized;
 }
 
 function getNextOpenSeat(room: RoomState) {

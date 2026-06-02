@@ -1,7 +1,7 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import type { ComponentProps } from 'react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -16,6 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
+  cleanupInactiveRooms,
   createRoom,
   getFirebaseConfigStatus,
   joinRoom,
@@ -38,6 +39,10 @@ export default function EntryScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingMessage, setPendingMessage] = useState('');
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    void cleanupInactiveRooms().catch(() => undefined);
+  }, []);
 
   const openRoom = (session: RoomSession) => {
     router.push({

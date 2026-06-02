@@ -59,10 +59,14 @@ const localRoomCodes: Record<string, string> = {};
 const localListeners: Record<string, Set<(room: RoomState | null) => void>> = {};
 const LOCAL_STATE_KEY = 'pocket-poker-chips.local-state.v1';
 const LOCAL_CHANNEL_NAME = 'pocket-poker-chips.local-rooms';
+const ROOM_INACTIVITY_TIMEOUT_MS = 60 * 60 * 1000;
+const ROOM_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
+const CLEANUP_THROTTLE_MS = 5 * 60 * 1000;
 
 let localUserCounter = 0;
 let localHydrated = false;
 let localBroadcastChannel: BroadcastChannel | undefined;
+let lastInactiveRoomCleanupAt = 0;
 
 type LocalStoredState = {
   rooms: Record<string, RoomState>;
@@ -91,6 +95,7 @@ export async function createRoom(params: {
   settings?: Partial<RoomSettings>;
 }): Promise<RoomSession> {
   const configStatus = getFirebaseConfigStatus();
+  queueInactiveRoomCleanup(configStatus);
   if (!configStatus.configured) {
     if (isLocalTransportForced()) {
       return createLocalRoom(params);
@@ -118,6 +123,7 @@ export async function createRoom(params: {
 
 export async function joinRoom(params: { code: string; playerName: string }): Promise<RoomSession> {
   const configStatus = getFirebaseConfigStatus();
+  queueInactiveRoomCleanup(configStatus);
   if (!configStatus.configured) {
     if (isLocalTransportForced()) {
       return joinLocalRoom(params);
@@ -251,6 +257,27 @@ export async function leaveRoom(params: { roomId: string; mode: TransportMode })
   }
 }
 
+export async function cleanupInactiveRooms() {
+  const configStatus = getFirebaseConfigStatus();
+  if (!configStatus.configured) {
+    return { roomsDeleted: 0, hostedRoomsDeleted: 0 };
+  }
+
+  const now = Date.now();
+  if (now - lastInactiveRoomCleanupAt < CLEANUP_THROTTLE_MS) {
+    return { roomsDeleted: 0, hostedRoomsDeleted: 0 };
+  }
+
+  lastInactiveRoomCleanupAt = now;
+  await getFirebaseUserId();
+  const database = getDatabase(getFirebaseApp());
+  const [roomsDeleted, hostedRoomsDeleted] = await Promise.all([
+    cleanupInactiveFirebaseRooms(database, now),
+    cleanupInactiveHostedRooms(database, now),
+  ]);
+  return { roomsDeleted, hostedRoomsDeleted };
+}
+
 export async function attachPresence(params: {
   roomId: string;
   playerId: string;
@@ -262,10 +289,15 @@ export async function attachPresence(params: {
 
   const database = getDatabase(getFirebaseApp());
   const playerRef = ref(database, `rooms/${params.roomId}/players/${params.playerId}`);
+  const roomRef = ref(database, `rooms/${params.roomId}`);
+  const touchRoom = () => update(roomRef, { updatedAt: Date.now() }).catch(() => undefined);
   await update(playerRef, { status: 'active', lastSeenAt: Date.now() });
+  await touchRoom();
+  const heartbeat = setInterval(touchRoom, ROOM_HEARTBEAT_INTERVAL_MS);
   const disconnect = onDisconnect(playerRef);
   await disconnect.update({ status: 'disconnected', lastSeenAt: serverTimestamp() });
   return () => {
+    clearInterval(heartbeat);
     disconnect.cancel();
   };
 }
@@ -392,6 +424,69 @@ async function createAvailableCode() {
   throw new Error('Could not create a room code. Try again.');
 }
 
+async function cleanupInactiveFirebaseRooms(
+  database: ReturnType<typeof getDatabase>,
+  now: number
+) {
+  const codeSnapshot = await get(ref(database, 'roomCodes'));
+  const codeMap = (codeSnapshot.val() ?? {}) as Record<string, string>;
+  const updates: Record<string, null> = {};
+  let roomsDeleted = 0;
+
+  await Promise.all(
+    Object.entries(codeMap).map(async ([code, roomId]) => {
+      try {
+        const roomSnapshot = await get(ref(database, `rooms/${roomId}`));
+        const room = roomSnapshot.val() as Pick<RoomState, 'createdAt' | 'updatedAt'> | null;
+        if (!room) {
+          updates[`roomCodes/${code}`] = null;
+          return;
+        }
+        if (!isInactiveRoom(room, now)) {
+          return;
+        }
+        updates[`roomCodes/${code}`] = null;
+        updates[`rooms/${roomId}`] = null;
+        roomsDeleted += 1;
+      } catch {
+        // Some active rooms are intentionally unreadable to non-members; skip them.
+      }
+    })
+  );
+
+  if (Object.keys(updates).length > 0) {
+    await update(ref(database), updates);
+  }
+
+  return roomsDeleted;
+}
+
+async function cleanupInactiveHostedRooms(
+  database: ReturnType<typeof getDatabase>,
+  now: number
+) {
+  const hostedSnapshot = await get(ref(database, 'p2pRooms'));
+  const hostedRooms = (hostedSnapshot.val() ?? {}) as Record<string, { expiresAt?: number }>;
+  const updates: Record<string, null> = {};
+
+  Object.entries(hostedRooms).forEach(([code, room]) => {
+    if (typeof room.expiresAt === 'number' && room.expiresAt <= now) {
+      updates[`p2pRooms/${code}`] = null;
+    }
+  });
+
+  if (Object.keys(updates).length > 0) {
+    await update(ref(database), updates);
+  }
+
+  return Object.keys(updates).length;
+}
+
+function isInactiveRoom(room: Pick<RoomState, 'createdAt' | 'updatedAt'>, now: number) {
+  const lastActivityAt = typeof room.updatedAt === 'number' ? room.updatedAt : room.createdAt;
+  return typeof lastActivityAt === 'number' && now - lastActivityAt >= ROOM_INACTIVITY_TIMEOUT_MS;
+}
+
 function getFirebaseApp() {
   const config = readFirebaseConfig();
   if (!hasConfig(config)) {
@@ -463,6 +558,13 @@ function getTransportLabel(mode: TransportMode) {
     case 'local':
       return 'Local demo mode';
   }
+}
+
+function queueInactiveRoomCleanup(configStatus = getFirebaseConfigStatus()) {
+  if (!configStatus.configured) {
+    return;
+  }
+  void cleanupInactiveRooms().catch(() => undefined);
 }
 
 function createLocalPlayerId() {

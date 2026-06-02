@@ -162,6 +162,7 @@ type HostToGuestMessage =
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const ROOM_TTL_MS = 45_000;
 const GUEST_STALE_AFTER_MS = 25_000;
+const FIREBASE_OPERATION_TIMEOUT_MS = 15_000;
 const HOSTED_STATE_KEY = 'pocket-poker-chips.hosted-state.v1';
 const PEER_CONFIGURATION: RTCConfiguration = {
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
@@ -185,7 +186,10 @@ export async function createHostedRoom(params: {
   getUserId: () => Promise<string>;
 }): Promise<HostedRoomSession> {
   requireHostedSupport();
-  const playerId = await params.getUserId();
+  const playerId = await withTimeout(
+    params.getUserId(),
+    'Firebase sign-in timed out. Check that Anonymous Auth is enabled and macharstein.github.io is an authorized Auth domain.'
+  );
   const code = await createAvailableHostedCode(params.database);
   const roomId = `p2p-${code.toLowerCase()}-${randomId(8)}`;
   const hostPeerId = createPeerId(playerId);
@@ -210,7 +214,10 @@ export async function createHostedRoom(params: {
     expiresAt: now + ROOM_TTL_MS,
   };
 
-  await set(ref(params.database, `p2pRooms/${code}`), directory);
+  await withTimeout(
+    set(ref(params.database, `p2pRooms/${code}`), directory),
+    'Creating the hosted room timed out. Check the Realtime Database URL and publish firebase.database.rules.json.'
+  );
   const runtime = createHostRuntime({
     database: params.database,
     room,
@@ -250,9 +257,15 @@ export async function joinHostedRoom(params: {
   getUserId: () => Promise<string>;
 }): Promise<HostedRoomSession> {
   requireHostedSupport();
-  const playerId = await params.getUserId();
+  const playerId = await withTimeout(
+    params.getUserId(),
+    'Firebase sign-in timed out. Check that Anonymous Auth is enabled and this domain is authorized in Firebase Auth.'
+  );
   const code = normalizeCode(params.code);
-  const directorySnapshot = await get(ref(params.database, `p2pRooms/${code}`));
+  const directorySnapshot = await withTimeout(
+    get(ref(params.database, `p2pRooms/${code}`)),
+    'Looking up the hosted room timed out. Check the Realtime Database URL and rules.'
+  );
   const directory = directorySnapshot.val() as HostedRoomDirectory | null;
   if (!directory || isHostedDirectoryStale(directory)) {
     throw new Error('Hosted room code not found or the host is offline.');
@@ -422,21 +435,24 @@ async function startHostSignaling(runtime: HostRuntime) {
 
   const roomRef = ref(runtime.database, `p2pRooms/${runtime.code}`);
   const now = Date.now();
-  await update(roomRef, {
-    roomId: runtime.roomId,
-    code: runtime.code,
-    hostUid: runtime.playerId,
-    hostPeerId: runtime.hostPeerId,
-    hostName: runtime.hostName,
-    status: 'active',
-    heartbeatAt: now,
-    expiresAt: now + ROOM_TTL_MS,
-  });
-  await onDisconnect(roomRef).update({
+  await withTimeout(
+    update(roomRef, {
+      roomId: runtime.roomId,
+      code: runtime.code,
+      hostUid: runtime.playerId,
+      hostPeerId: runtime.hostPeerId,
+      hostName: runtime.hostName,
+      status: 'active',
+      heartbeatAt: now,
+      expiresAt: now + ROOM_TTL_MS,
+    }),
+    'Starting the hosted room timed out. Check Realtime Database rules for p2pRooms.'
+  );
+  void onDisconnect(roomRef).update({
     status: 'stale',
     heartbeatAt: serverTimestamp(),
     expiresAt: Date.now() + ROOM_TTL_MS,
-  });
+  }).catch(() => undefined);
 
   runtime.heartbeatTimer = setInterval(() => {
     void update(roomRef, {
@@ -486,11 +502,14 @@ async function answerPeerOffer(runtime: HostRuntime, peerId: string, peer: Hoste
   await pc.setRemoteDescription(offer);
   const answer = await pc.createAnswer();
   await pc.setLocalDescription(answer);
-  await update(ref(runtime.database, `p2pRooms/${runtime.code}/peers/${peerId}`), {
-    answer: serializeDescription(answer),
-    status: 'connected',
-    lastSeenAt: Date.now(),
-  });
+  await withTimeout(
+    update(ref(runtime.database, `p2pRooms/${runtime.code}/peers/${peerId}`), {
+      answer: serializeDescription(answer),
+      status: 'connected',
+      lastSeenAt: Date.now(),
+    }),
+    'Answering the player connection timed out. Check Realtime Database rules for p2pRooms peers.'
+  );
 
   peerConnection.candidateUnsubscribe = onValue(
     ref(runtime.database, `p2pRooms/${runtime.code}/peers/${peerId}/offerCandidates`),
@@ -615,20 +634,23 @@ async function createGuestRuntime(params: {
 
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
-  await set(ref(params.database, `p2pRooms/${runtime.code}/peers/${runtime.peerId}`), {
-    id: runtime.peerId,
-    uid: runtime.playerId,
-    playerId: runtime.playerId,
-    name: runtime.playerName,
-    status: 'joining',
-    createdAt: Date.now(),
-    lastSeenAt: Date.now(),
-    offer: serializeDescription(offer),
-  });
-  await onDisconnect(ref(params.database, `p2pRooms/${runtime.code}/peers/${runtime.peerId}`)).update({
+  await withTimeout(
+    set(ref(params.database, `p2pRooms/${runtime.code}/peers/${runtime.peerId}`), {
+      id: runtime.peerId,
+      uid: runtime.playerId,
+      playerId: runtime.playerId,
+      name: runtime.playerName,
+      status: 'joining',
+      createdAt: Date.now(),
+      lastSeenAt: Date.now(),
+      offer: serializeDescription(offer),
+    }),
+    'Joining the hosted room timed out. Check Realtime Database rules for p2pRooms peers.'
+  );
+  void onDisconnect(ref(params.database, `p2pRooms/${runtime.code}/peers/${runtime.peerId}`)).update({
     status: 'disconnected',
     lastSeenAt: serverTimestamp(),
-  });
+  }).catch(() => undefined);
 
   runtime.answerUnsubscribe = onValue(
     ref(params.database, `p2pRooms/${runtime.code}/peers/${runtime.peerId}/answer`),
@@ -661,7 +683,10 @@ async function createGuestRuntime(params: {
 }
 
 async function reconnectStoredGuest(database: Database, stored: StoredHostedRoom) {
-  const directorySnapshot = await get(ref(database, `p2pRooms/${stored.code}`));
+  const directorySnapshot = await withTimeout(
+    get(ref(database, `p2pRooms/${stored.code}`)),
+    'Reconnecting to the hosted room timed out. Check the Realtime Database URL and rules.'
+  );
   const directory = directorySnapshot.val() as HostedRoomDirectory | null;
   if (!directory || isHostedDirectoryStale(directory)) {
     throw new Error('Host is offline.');
@@ -872,7 +897,10 @@ async function stopGuestRuntime(runtime: GuestRuntime) {
 async function createAvailableHostedCode(database: Database) {
   for (let index = 0; index < 10; index += 1) {
     const code = createRoomCode();
-    const snapshot = await get(ref(database, `p2pRooms/${code}`));
+    const snapshot = await withTimeout(
+      get(ref(database, `p2pRooms/${code}`)),
+      'Checking room code availability timed out. Check the Realtime Database URL from Firebase Console.'
+    );
     const directory = snapshot.val() as HostedRoomDirectory | null;
     if (!directory) {
       return code;
@@ -926,6 +954,18 @@ function requireHostedSupport() {
   if (!canUseHostedRooms()) {
     throw new Error('Host-run web rooms need a browser with WebRTC support.');
   }
+}
+
+function withTimeout<T>(promise: Promise<T>, message: string, timeoutMs = FIREBASE_OPERATION_TIMEOUT_MS) {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  });
 }
 
 function createPeerId(playerId: string) {

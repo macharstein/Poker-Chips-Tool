@@ -36,6 +36,7 @@ export default function EntryScreen() {
   const [bigBlind, setBigBlind] = useState('50');
   const [blindMinutes, setBlindMinutes] = useState('20');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pendingMessage, setPendingMessage] = useState('');
   const [error, setError] = useState('');
 
   const openRoom = (session: RoomSession) => {
@@ -55,6 +56,9 @@ export default function EntryScreen() {
 
   const handleCreate = async () => {
     setIsSubmitting(true);
+    setPendingMessage(
+      configStatus.defaultMode === 'p2p' ? 'Creating hosted room in Firebase...' : 'Creating room...'
+    );
     setError('');
     try {
       const session = await createRoom({
@@ -71,11 +75,15 @@ export default function EntryScreen() {
       setError(caught instanceof Error ? caught.message : 'Could not create the room.');
     } finally {
       setIsSubmitting(false);
+      setPendingMessage('');
     }
   };
 
   const handleJoin = async () => {
     setIsSubmitting(true);
+    setPendingMessage(
+      configStatus.defaultMode === 'p2p' ? 'Finding host and connecting...' : 'Joining room...'
+    );
     setError('');
     try {
       const session = await joinRoom({ code: joinCode, playerName: joinName });
@@ -84,6 +92,7 @@ export default function EntryScreen() {
       setError(caught instanceof Error ? caught.message : 'Could not join the room.');
     } finally {
       setIsSubmitting(false);
+      setPendingMessage('');
     }
   };
 
@@ -114,6 +123,12 @@ export default function EntryScreen() {
               <View style={[styles.statusDot, configStatus.configured && styles.statusDotLive]} />
               <Text style={styles.statusText}>{configStatus.label}</Text>
             </View>
+            {!configStatus.canCreateRooms ? (
+              <Text style={styles.warningText}>
+                Shared rooms need Firebase Realtime Database config. Local mode is only for same-browser
+                testing.
+              </Text>
+            ) : null}
 
             <View style={styles.panel}>
               <View style={styles.panelHeader}>
@@ -183,7 +198,12 @@ export default function EntryScreen() {
             </View>
 
             {error ? <Text style={styles.errorText}>{error}</Text> : null}
-            {isSubmitting ? <ActivityIndicator color="#F4C95D" /> : null}
+            {isSubmitting ? (
+              <View style={styles.submittingRow}>
+                <ActivityIndicator color="#F4C95D" />
+                <Text style={styles.statusText}>{pendingMessage}</Text>
+              </View>
+            ) : null}
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
@@ -406,5 +426,18 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
     textAlign: 'center',
+  },
+  warningText: {
+    color: '#F4C95D',
+    fontSize: 13,
+    fontWeight: '800',
+    lineHeight: 18,
+    textAlign: 'center',
+  },
+  submittingRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'center',
   },
 });

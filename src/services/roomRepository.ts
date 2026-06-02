@@ -8,7 +8,6 @@ import {
   ref,
   runTransaction,
   serverTimestamp,
-  set,
   update,
 } from 'firebase/database';
 
@@ -196,17 +195,28 @@ export async function dispatchRoomAction(params: {
   if (params.mode === 'firebase') {
     const database = getDatabase(getFirebaseApp());
     const roomRef = ref(database, `rooms/${params.roomId}`);
+    const knownSnapshot = await get(roomRef);
+    const knownRoom = knownSnapshot.val() as RoomState | null;
+    if (!knownRoom) {
+      throw new Error('Room not found.');
+    }
     let actionError: Error | undefined;
+    let usedKnownRoomFallback = false;
     const result = await runTransaction(
       roomRef,
       (current: RoomState | null) => {
-        if (!current) {
+        let baseRoom = current;
+        if (!baseRoom && !usedKnownRoomFallback) {
+          usedKnownRoomFallback = true;
+          baseRoom = knownRoom;
+        }
+        if (!baseRoom) {
           actionError = new Error('Room not found.');
           return undefined;
         }
         try {
           return stripUndefined(
-            applyPokerAction(current, params.action, { actorId: params.actorId })
+            applyPokerAction(baseRoom, params.action, { actorId: params.actorId })
           ) as RoomState;
         } catch (error) {
           actionError = error instanceof Error ? error : new Error('Action rejected.');
@@ -301,8 +311,10 @@ async function createFirebaseRoom(params: {
     settings: params.settings,
   });
 
-  await set(ref(database, `rooms/${roomId}`), stripUndefined(room));
-  await set(ref(database, `roomCodes/${code}`), roomId);
+  await update(ref(database), {
+    [`rooms/${roomId}`]: stripUndefined(room),
+    [`roomCodes/${code}`]: roomId,
+  });
   return { roomId, code, playerId: userId, mode: 'firebase' };
 }
 

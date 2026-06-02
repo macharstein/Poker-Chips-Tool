@@ -72,7 +72,7 @@
     },
     "rooms": {
       "$roomId": {
-        ".read": "auth != null && (data.child('adminUid').val() == auth.uid || data.child('players').child(auth.uid).exists() || (data.child('status').val() == 'lobby' && root.child('roomCodes').child(data.child('code').val()).val() == $roomId))",
+        ".read": "auth != null && (data.child('adminUid').val() == auth.uid || data.child('players').child(auth.uid).exists() || data.child('status').val() == 'lobby')",
         ".write": "auth != null && ((!data.exists() && newData.child('adminUid').val() == auth.uid) || data.child('adminUid').val() == auth.uid || data.child('players').child(auth.uid).exists() || newData.child('players').child(auth.uid).exists())",
         ".validate": "newData.hasChildren(['id', 'code', 'adminUid', 'status', 'version', 'settings', 'players'])",
         "adminUid": {

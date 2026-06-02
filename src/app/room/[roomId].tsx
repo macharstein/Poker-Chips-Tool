@@ -70,7 +70,6 @@ export default function RoomScreen() {
   const [room, setRoom] = useState<RoomState | null>(null);
   const [error, setError] = useState('');
   const [busyAction, setBusyAction] = useState('');
-  const [guestName, setGuestName] = useState('');
   const [selectedPlayerId, setSelectedPlayerId] = useState('');
   const [adjustAmount, setAdjustAmount] = useState('500');
   const [raiseAmount, setRaiseAmount] = useState('');
@@ -195,15 +194,6 @@ export default function RoomScreen() {
       },
     });
 
-  const addGuest = () => {
-    const name = guestName.trim();
-    if (!name) {
-      return;
-    }
-    setGuestName('');
-    send({ type: 'ADMIN_ADD_PLAYER', name });
-  };
-
   const effectiveSelectedPlayerId = selectedPlayerId || players[0]?.id || '';
   const selectedPlayer = effectiveSelectedPlayerId
     ? room.players[effectiveSelectedPlayerId]
@@ -265,11 +255,8 @@ export default function RoomScreen() {
                 players={players}
                 shareValue={shareValue}
                 isAdmin={isAdmin}
-                guestName={guestName}
-                setGuestName={setGuestName}
                 onShare={() => Share.share({ message: `Pocket Poker Chips room ${room.code}` })}
                 onSaveSettings={saveSettings}
-                onAddGuest={addGuest}
                 onStart={requestStartGame}
                 onToggleSittingOut={(playerId) =>
                   send({ type: 'ADMIN_TOGGLE_SITTING_OUT', playerId })
@@ -354,11 +341,8 @@ function LobbyView({
   players,
   shareValue,
   isAdmin,
-  guestName,
-  setGuestName,
   onShare,
   onSaveSettings,
-  onAddGuest,
   onStart,
   onToggleSittingOut,
   winnerIds,
@@ -367,11 +351,8 @@ function LobbyView({
   players: Player[];
   shareValue: string;
   isAdmin: boolean;
-  guestName: string;
-  setGuestName: (value: string) => void;
   onShare: () => void;
   onSaveSettings: (settingsDraft: SettingsDraft) => void;
-  onAddGuest: () => void;
   onStart: () => void;
   onToggleSittingOut: (playerId: string) => void;
   winnerIds: string[];
@@ -429,25 +410,6 @@ function LobbyView({
           <View style={styles.buttonRow}>
             <SecondaryButton title="Save setup" onPress={() => onSaveSettings(settingsDraft)} />
             <PrimaryButton title="Start hand" onPress={onStart} />
-          </View>
-          <View style={styles.addPlayerRow}>
-            <TextInput
-              value={guestName}
-              onChangeText={setGuestName}
-              placeholder="Guest player"
-              placeholderTextColor="#7D8B80"
-              style={styles.inlineInput}
-            />
-            <Pressable
-              accessibilityRole="button"
-              style={({ pressed }) => [styles.squareButton, pressed && styles.pressed]}
-              onPress={onAddGuest}>
-              <SymbolView
-                tintColor="#14120A"
-                name={{ ios: 'plus.circle.fill', android: 'add', web: 'add' }}
-                size={18}
-              />
-            </Pressable>
           </View>
         </View>
       ) : null}
@@ -1654,11 +1616,6 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 8,
   },
-  addPlayerRow: {
-    flexDirection: 'row',
-    gap: 8,
-    alignItems: 'center',
-  },
   primaryButton: {
     minHeight: 44,
     borderRadius: 8,
@@ -1996,14 +1953,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '900',
-  },
-  squareButton: {
-    width: 46,
-    height: 46,
-    borderRadius: 8,
-    backgroundColor: '#F4C95D',
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   pressed: {
     opacity: 0.72,

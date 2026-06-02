@@ -30,7 +30,7 @@
           ".validate": "newData.isString()"
         },
         "status": {
-          ".validate": "newData.val() in ['active', 'stale', 'closed']"
+          ".validate": "newData.val() == 'active' || newData.val() == 'stale' || newData.val() == 'closed'"
         },
         "createdAt": {
           ".validate": "newData.isNumber()"
@@ -58,7 +58,7 @@
               ".validate": "newData.isString()"
             },
             "status": {
-              ".validate": "newData.val() in ['joining', 'connected', 'disconnected']"
+              ".validate": "newData.val() == 'joining' || newData.val() == 'connected' || newData.val() == 'disconnected'"
             },
             "createdAt": {
               ".validate": "newData.isNumber()"
@@ -72,7 +72,7 @@
     },
     "rooms": {
       "$roomId": {
-        ".read": "auth != null && (data.child('adminUid').val() == auth.uid || data.child('players').child(auth.uid).exists())",
+        ".read": "auth != null && (data.child('adminUid').val() == auth.uid || data.child('players').child(auth.uid).exists() || (data.child('status').val() == 'lobby' && root.child('roomCodes').child(data.child('code').val()).val() == $roomId))",
         ".write": "auth != null && ((!data.exists() && newData.child('adminUid').val() == auth.uid) || data.child('adminUid').val() == auth.uid || data.child('players').child(auth.uid).exists() || newData.child('players').child(auth.uid).exists())",
         ".validate": "newData.hasChildren(['id', 'code', 'adminUid', 'status', 'version', 'settings', 'players'])",
         "adminUid": {
@@ -82,7 +82,7 @@
           ".validate": "newData.isString() && newData.val().matches(/^[A-Z2-9]{6,8}$/)"
         },
         "status": {
-          ".validate": "newData.val() in ['lobby', 'active', 'paused', 'ended']"
+          ".validate": "newData.val() == 'lobby' || newData.val() == 'active' || newData.val() == 'paused' || newData.val() == 'ended'"
         },
         "version": {
           ".validate": "newData.isNumber() && newData.val() >= 0"

@@ -1,7 +1,7 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import type { ComponentProps } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -34,6 +34,7 @@ import {
   attachPresence,
   createShareValue,
   dispatchRoomAction,
+  endRoomAndDelete,
   leaveRoom,
   subscribeRoom,
   type RoomRole,
@@ -41,6 +42,20 @@ import {
 } from '@/services/roomRepository';
 
 type SettingsDraft = Record<'startingStack' | 'smallBlind' | 'bigBlind' | 'blindIntervalMinutes', string>;
+type FinalReportPlayer = {
+  id: string;
+  name: string;
+  stack: number;
+  net: number;
+  rank: number;
+};
+type FinalReport = {
+  code: string;
+  endedAt: number;
+  startingStack: number;
+  totalPlayers: number;
+  players: FinalReportPlayer[];
+};
 type ConfirmState = {
   title: string;
   body: string;
@@ -68,6 +83,8 @@ export default function RoomScreen() {
   const peerId = firstParam(params.peerId);
   const hostPeerId = firstParam(params.hostPeerId);
   const [room, setRoom] = useState<RoomState | null>(null);
+  const roomLoadedRef = useRef(false);
+  const [roomEnded, setRoomEnded] = useState(false);
   const [error, setError] = useState('');
   const [busyAction, setBusyAction] = useState('');
   const [selectedPlayerId, setSelectedPlayerId] = useState('');
@@ -78,19 +95,33 @@ export default function RoomScreen() {
   const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [isShowPanelOpen, setIsShowPanelOpen] = useState(false);
   const [dismissedCompleteHandId, setDismissedCompleteHandId] = useState('');
+  const [finalReport, setFinalReport] = useState<FinalReport | null>(null);
 
   useEffect(() => {
     if (!roomId) {
       return;
     }
 
-    const subscription = subscribeRoom(roomId, mode, setRoom, {
-      actorId,
-      code,
-      role,
-      peerId,
-      hostPeerId,
-    });
+    const subscription = subscribeRoom(
+      roomId,
+      mode,
+      (nextRoom) => {
+        if (nextRoom) {
+          roomLoadedRef.current = true;
+          setRoomEnded(false);
+        } else if (roomLoadedRef.current) {
+          setRoomEnded(true);
+        }
+        setRoom(nextRoom);
+      },
+      {
+        actorId,
+        code,
+        role,
+        peerId,
+        hostPeerId,
+      }
+    );
     let detachPresence: (() => void) | undefined;
     let cancelled = false;
     if (actorId) {
@@ -113,9 +144,15 @@ export default function RoomScreen() {
   }, [actorId, code, hostPeerId, mode, peerId, role, roomId]);
 
   const players = useMemo(() => (room ? getOrderedPlayers(room) : []), [room]);
+  const visiblePlayers = useMemo(
+    () => (room ? players.filter((player) => !room.kickedPlayerIds?.[player.id]) : []),
+    [players, room]
+  );
   const isAdmin = Boolean(room && actorId && room.adminUid === actorId);
   const activePlayer = room?.hand?.activePlayerId ? room.players[room.hand.activePlayerId] : undefined;
-  const currentPlayer = actorId ? room?.players[actorId] : undefined;
+  const isRemovedFromRoom = Boolean(room && actorId && room.kickedPlayerIds?.[actorId]);
+  const currentPlayer =
+    actorId && !isRemovedFromRoom ? room?.players[actorId] : undefined;
   const isCurrentTurn = Boolean(room?.hand?.activePlayerId && room.hand.activePlayerId === actorId);
   const shareValue = room ? createShareValue(room.code) : '';
   const winnerIds = room?.hand?.result?.winnerIds ?? [];
@@ -151,17 +188,6 @@ export default function RoomScreen() {
     });
   };
 
-  const requestStartGame = () => {
-    setConfirm({
-      title: 'Start game?',
-      body: 'Start the game?',
-      confirmText: 'Start game',
-      onConfirm: () => {
-        void send({ type: 'START_HAND' });
-      },
-    });
-  };
-
   if (!roomId || !actorId) {
     return (
       <EmptyState
@@ -172,7 +198,26 @@ export default function RoomScreen() {
     );
   }
 
+  if (finalReport) {
+    return (
+      <FinalReportScreen
+        report={finalReport}
+        onSave={() => saveFinalReport(finalReport)}
+        onDone={() => router.replace('/')}
+      />
+    );
+  }
+
   if (!room) {
+    if (roomEnded) {
+      return (
+        <EmptyState
+          title="Game ended"
+          body="The host ended this game and closed the room."
+          onBack={() => router.replace('/')}
+        />
+      );
+    }
     return (
       <View style={styles.screen}>
         <SafeAreaView style={styles.centerState}>
@@ -180,6 +225,16 @@ export default function RoomScreen() {
           <Text style={styles.mutedText}>Opening room...</Text>
         </SafeAreaView>
       </View>
+    );
+  }
+
+  if (actorId && !isAdmin && (isRemovedFromRoom || !room.players[actorId])) {
+    return (
+      <EmptyState
+        title="Removed from room"
+        body="The host removed you from this room."
+        onBack={() => router.replace('/')}
+      />
     );
   }
 
@@ -194,12 +249,25 @@ export default function RoomScreen() {
       },
     });
 
-  const effectiveSelectedPlayerId = selectedPlayerId || players[0]?.id || '';
+  const effectiveSelectedPlayerId =
+    selectedPlayerId && visiblePlayers.some((player) => player.id === selectedPlayerId)
+      ? selectedPlayerId
+      : visiblePlayers[0]?.id || '';
   const selectedPlayer = effectiveSelectedPlayerId
     ? room.players[effectiveSelectedPlayerId]
     : undefined;
   const callAmount = currentPlayer && room.hand ? getCallAmount(room, currentPlayer.id) : 0;
   const canCurrentPlayerCheck = currentPlayer && room.hand ? canCheck(room, currentPlayer.id) : false;
+  const handleEndGame = () => {
+    const report = buildFinalReport(room, visiblePlayers);
+    setIsAdminOpen(false);
+    setBusyAction('END_GAME');
+    setError('');
+    void endRoomAndDelete({ roomId, code: room.code, mode })
+      .then(() => setFinalReport(report))
+      .catch((caught) => setError(caught instanceof Error ? caught.message : 'Could not delete room.'))
+      .finally(() => setBusyAction(''));
+  };
 
   return (
     <View style={styles.screen}>
@@ -252,21 +320,22 @@ export default function RoomScreen() {
             {room.status === 'lobby' ? (
               <LobbyView
                 room={room}
-                players={players}
+                players={visiblePlayers}
                 shareValue={shareValue}
                 isAdmin={isAdmin}
                 onShare={() => Share.share({ message: `Pocket Poker Chips room ${room.code}` })}
                 onSaveSettings={saveSettings}
-                onStart={requestStartGame}
+                onStart={() => send({ type: 'START_HAND' })}
                 onToggleSittingOut={(playerId) =>
                   send({ type: 'ADMIN_TOGGLE_SITTING_OUT', playerId })
                 }
+                onKick={(playerId) => send({ type: 'ADMIN_KICK_PLAYER', playerId })}
                 winnerIds={winnerIds}
               />
             ) : (
               <TableView
                 room={room}
-                players={players}
+                players={visiblePlayers}
                 activePlayer={activePlayer}
                 currentPlayer={currentPlayer}
                 isAdmin={isAdmin}
@@ -297,13 +366,14 @@ export default function RoomScreen() {
         <AdminPanelModal
           visible={isAdminOpen}
           room={room}
-          players={players}
+          players={visiblePlayers}
           selectedPlayer={selectedPlayer}
           selectedPlayerId={effectiveSelectedPlayerId}
           setSelectedPlayerId={setSelectedPlayerId}
           adjustAmount={adjustAmount}
           setAdjustAmount={setAdjustAmount}
           onAction={send}
+          onEndGame={handleEndGame}
           onClose={() => setIsAdminOpen(false)}
         />
       ) : null}
@@ -311,14 +381,14 @@ export default function RoomScreen() {
         <ShowdownResolver
           key={room.hand.id}
           room={room}
-          players={players}
+          players={visiblePlayers}
           onResolve={(payouts) => send({ type: 'ADMIN_RESOLVE_SHOWDOWN', payouts })}
         />
       ) : null}
       {isAdmin && room.hand?.phase === 'complete' && room.hand.id !== dismissedCompleteHandId ? (
         <NextHandDialog
           room={room}
-          players={players}
+          players={visiblePlayers}
           onClose={() => setDismissedCompleteHandId(room.hand?.id ?? '')}
           onContinue={() => {
             setDismissedCompleteHandId(room.hand?.id ?? '');
@@ -329,7 +399,7 @@ export default function RoomScreen() {
       <ShowStatusModal
         visible={isShowPanelOpen}
         room={room}
-        players={players}
+        players={visiblePlayers}
         onClose={() => setIsShowPanelOpen(false)}
       />
     </View>
@@ -345,6 +415,7 @@ function LobbyView({
   onSaveSettings,
   onStart,
   onToggleSittingOut,
+  onKick,
   winnerIds,
 }: {
   room: RoomState;
@@ -355,6 +426,7 @@ function LobbyView({
   onSaveSettings: (settingsDraft: SettingsDraft) => void;
   onStart: () => void;
   onToggleSittingOut: (playerId: string) => void;
+  onKick: (playerId: string) => void;
   winnerIds: string[];
 }) {
   const [settingsDraft, setSettingsDraft] = useState<SettingsDraft>(() => ({
@@ -408,7 +480,7 @@ function LobbyView({
             />
           </View>
           <View style={styles.buttonRow}>
-            <SecondaryButton title="Save setup" onPress={() => onSaveSettings(settingsDraft)} />
+            <PrimaryButton title="Apply setup" onPress={() => onSaveSettings(settingsDraft)} />
             <PrimaryButton title="Start hand" onPress={onStart} />
           </View>
         </View>
@@ -419,6 +491,9 @@ function LobbyView({
         activePlayerId={room.hand?.activePlayerId}
         winnerIds={winnerIds}
         onToggle={isAdmin ? onToggleSittingOut : undefined}
+        onKick={isAdmin ? onKick : undefined}
+        showConnection={isAdmin}
+        adminId={room.adminUid}
       />
     </>
   );
@@ -457,6 +532,12 @@ function TableView({
   const minRaiseTo = hand ? hand.currentBet + hand.minRaise : room.settings.bigBlind;
   const allInTarget = currentPlayer
     ? currentPlayer.committedThisStreet + currentPlayer.stack
+    : minRaiseTo;
+  const potRaiseTarget = currentPlayer
+    ? Math.min(
+        allInTarget,
+        Math.max(minRaiseTo, hand ? hand.currentBet + hand.pot : room.settings.bigBlind)
+      )
     : minRaiseTo;
 
   return (
@@ -508,10 +589,10 @@ function TableView({
               style={styles.inlineInput}
             />
             <SecondaryButton
-              title="2x BB"
-              onPress={() => setRaiseAmount(String(room.settings.bigBlind * 2))}
+              title="Pot"
+              onPress={() => setRaiseAmount(String(potRaiseTarget))}
             />
-            <SecondaryButton title="All-in" onPress={() => setRaiseAmount(String(allInTarget))} />
+            <BlueButton title="All-in" onPress={() => setRaiseAmount(String(allInTarget))} />
           </View>
           <PrimaryButton
             title="Confirm raise"
@@ -893,6 +974,186 @@ function ShowStatusModal({
   );
 }
 
+function FinalReportScreen({
+  report,
+  onSave,
+  onDone,
+}: {
+  report: FinalReport;
+  onSave: () => void;
+  onDone: () => void;
+}) {
+  const winner = report.players[0];
+
+  return (
+    <View style={styles.screen}>
+      <SafeAreaView style={styles.safeArea}>
+        <ScrollView contentContainerStyle={styles.finalReportContent} showsVerticalScrollIndicator={false}>
+          <View style={styles.finalReportHero}>
+            <Text style={styles.winnerBannerKicker}>Final report</Text>
+            <Text style={styles.finalReportTitle}>Room {report.code}</Text>
+            <Text style={styles.confirmBody}>
+              {winner ? `${winner.name} finished on top.` : 'Game complete.'}
+            </Text>
+            <Text style={styles.mutedText}>
+              {formatReportDate(report.endedAt)} | {report.totalPlayers} players
+            </Text>
+          </View>
+
+          <View style={styles.finalReportList}>
+            {report.players.map((player) => (
+              <View
+                key={player.id}
+                style={[styles.finalReportRow, player.rank === 1 && styles.finalReportRowWinner]}>
+                <Text style={styles.finalReportRank}>#{player.rank}</Text>
+                <View style={styles.finalReportPlayer}>
+                  <Text style={styles.finalReportName}>{player.name}</Text>
+                  <Text style={player.net >= 0 ? styles.finalReportNetPositive : styles.finalReportNetNegative}>
+                    {player.net >= 0 ? '+' : ''}
+                    {formatChips(player.net)}
+                  </Text>
+                </View>
+                <Text style={styles.finalReportStack}>{formatChips(player.stack)}</Text>
+              </View>
+            ))}
+          </View>
+
+          <View style={styles.buttonRow}>
+            <PrimaryButton title="Save PNG" onPress={onSave} />
+            <SecondaryButton title="Back home" onPress={onDone} />
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    </View>
+  );
+}
+
+function buildFinalReport(room: RoomState, players: Player[]): FinalReport {
+  const sorted = [...players].sort((a, b) => {
+    if (b.stack !== a.stack) {
+      return b.stack - a.stack;
+    }
+    return a.seat - b.seat;
+  });
+
+  return {
+    code: room.code,
+    endedAt: Date.now(),
+    startingStack: room.settings.startingStack,
+    totalPlayers: sorted.length,
+    players: sorted.map((player, index) => ({
+      id: player.id,
+      name: player.name,
+      stack: player.stack,
+      net: player.stack - room.settings.startingStack,
+      rank: index + 1,
+    })),
+  };
+}
+
+function saveFinalReport(report: FinalReport) {
+  if (Platform.OS === 'web' && typeof document !== 'undefined') {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1200;
+    canvas.height = Math.max(900, 390 + report.players.length * 92);
+    const context = canvas.getContext('2d');
+    if (!context) {
+      return;
+    }
+    drawFinalReportPng(context, canvas.width, canvas.height, report);
+    const link = document.createElement('a');
+    link.download = `pocket-poker-chips-${report.code.toLowerCase()}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+    return;
+  }
+
+  void Share.share({ message: buildFinalReportText(report) });
+}
+
+function drawFinalReportPng(
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  report: FinalReport
+) {
+  context.fillStyle = '#101714';
+  context.fillRect(0, 0, width, height);
+  context.fillStyle = '#17211C';
+  roundRect(context, 70, 70, width - 140, height - 140, 24);
+  context.fill();
+  context.strokeStyle = '#FFD275';
+  context.lineWidth = 6;
+  context.stroke();
+
+  context.fillStyle = '#FFD275';
+  context.font = '900 42px Arial';
+  context.fillText('Pocket Poker Chips', 120, 150);
+  context.fillStyle = '#F7FAF6';
+  context.font = '900 68px Arial';
+  context.fillText(`Room ${report.code}`, 120, 235);
+  context.fillStyle = '#A9B6AC';
+  context.font = '700 28px Arial';
+  context.fillText(`${formatReportDate(report.endedAt)} | ${report.totalPlayers} players`, 120, 285);
+
+  let y = 370;
+  report.players.forEach((player) => {
+    context.fillStyle = player.rank === 1 ? '#263B20' : '#111A16';
+    roundRect(context, 120, y - 54, width - 240, 72, 14);
+    context.fill();
+    context.strokeStyle = player.rank === 1 ? '#FFD275' : '#25382E';
+    context.lineWidth = 2;
+    context.stroke();
+
+    context.fillStyle = player.rank === 1 ? '#FFD275' : '#A9B6AC';
+    context.font = '900 26px Arial';
+    context.fillText(`#${player.rank}`, 150, y - 8);
+    context.fillStyle = '#F7FAF6';
+    context.font = '900 30px Arial';
+    context.fillText(player.name, 235, y - 8);
+    context.fillStyle = player.net >= 0 ? '#37C978' : '#FF8D7B';
+    context.font = '900 25px Arial';
+    context.fillText(`${player.net >= 0 ? '+' : ''}${formatChips(player.net)}`, 650, y - 8);
+    context.fillStyle = '#FFFFFF';
+    context.textAlign = 'right';
+    context.font = '900 30px Arial';
+    context.fillText(formatChips(player.stack), width - 150, y - 8);
+    context.textAlign = 'left';
+    y += 92;
+  });
+}
+
+function buildFinalReportText(report: FinalReport) {
+  const rows = report.players
+    .map(
+      (player) =>
+        `#${player.rank} ${player.name}: ${formatChips(player.stack)} (${player.net >= 0 ? '+' : ''}${formatChips(player.net)})`
+    )
+    .join('\n');
+  return `Pocket Poker Chips final report\nRoom ${report.code}\n${formatReportDate(report.endedAt)}\n\n${rows}`;
+}
+
+function roundRect(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number
+) {
+  context.beginPath();
+  context.moveTo(x + radius, y);
+  context.lineTo(x + width - radius, y);
+  context.quadraticCurveTo(x + width, y, x + width, y + radius);
+  context.lineTo(x + width, y + height - radius);
+  context.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+  context.lineTo(x + radius, y + height);
+  context.quadraticCurveTo(x, y + height, x, y + height - radius);
+  context.lineTo(x, y + radius);
+  context.quadraticCurveTo(x, y, x + radius, y);
+  context.closePath();
+}
+
 function AdminPanel({
   room,
   players,
@@ -902,6 +1163,7 @@ function AdminPanel({
   adjustAmount,
   setAdjustAmount,
   onAction,
+  onEndGame,
 }: {
   room: RoomState;
   players: Player[];
@@ -911,6 +1173,7 @@ function AdminPanel({
   adjustAmount: string;
   setAdjustAmount: (value: string) => void;
   onAction: (action: PokerAction) => void;
+  onEndGame: () => void;
 }) {
   const numericAmount = toNumber(adjustAmount, 0);
   const activePlayer = room.hand?.activePlayerId ? room.players[room.hand.activePlayerId] : undefined;
@@ -929,6 +1192,7 @@ function AdminPanel({
           onPress={() => onAction({ type: room.status === 'paused' ? 'ADMIN_RESUME' : 'ADMIN_PAUSE' })}
         />
         <DangerButton title="End hand" onPress={() => onAction({ type: 'ADMIN_END_HAND' })} />
+        <DangerButton title="End game" onPress={onEndGame} />
       </View>
 
       {activePlayer ? (
@@ -1019,12 +1283,18 @@ function AdminPanel({
                 onAction({ type: 'ADMIN_AWARD_POT', playerId: selectedPlayer.id })
               }
             />
+            {selectedPlayer.id !== room.adminUid ? (
+              <DangerButton
+                title="Kick"
+                onPress={() => onAction({ type: 'ADMIN_KICK_PLAYER', playerId: selectedPlayer.id })}
+              />
+            ) : null}
           </View>
         </>
       ) : null}
 
       <View style={styles.eventLog}>
-        {Object.values(room.events)
+        {Object.values(room.events ?? {})
           .sort((a, b) => b.sequenceNumber - a.sequenceNumber)
           .slice(0, 6)
           .map((event) => (
@@ -1043,11 +1313,17 @@ function PlayerList({
   activePlayerId,
   winnerIds,
   onToggle,
+  onKick,
+  showConnection,
+  adminId,
 }: {
   players: Player[];
   activePlayerId?: string | null;
   winnerIds?: string[];
   onToggle?: (playerId: string) => void;
+  onKick?: (playerId: string) => void;
+  showConnection?: boolean;
+  adminId?: string;
 }) {
   return (
     <View style={styles.panel}>
@@ -1069,6 +1345,7 @@ function PlayerList({
                   {formatChips(player.stack)} | {displayPlayerStatus(player)}
                 </Text>
               </View>
+              {showConnection ? <ConnectionBadge player={player} /> : null}
               {isWinner ? <Text style={styles.winnerBadge}>WIN</Text> : null}
               {activePlayerId === player.id ? <Text style={styles.activeBadge}>TURN</Text> : null}
               {isOut ? <Text style={styles.outBadge}>OUT</Text> : null}
@@ -1082,11 +1359,32 @@ function PlayerList({
                   </Text>
                 </Pressable>
               ) : null}
+              {onKick && player.id !== adminId ? (
+                <Pressable
+                  accessibilityRole="button"
+                  style={({ pressed }) => [styles.kickButton, pressed && styles.pressed]}
+                  onPress={() => onKick(player.id)}>
+                  <Text style={styles.kickButtonText}>Kick</Text>
+                </Pressable>
+              ) : null}
             </View>
           );
         })}
       </View>
     </View>
+  );
+}
+
+function ConnectionBadge({ player }: { player: Player }) {
+  const status = getConnectionStatus(player);
+  return (
+    <Text
+      style={[
+        styles.connectionBadge,
+        status === 'online' ? styles.connectionBadgeOnline : styles.connectionBadgeOffline,
+      ]}>
+      {status === 'online' ? 'ONLINE' : 'OFFLINE'}
+    </Text>
   );
 }
 
@@ -1187,6 +1485,17 @@ function SecondaryButton({ title, onPress }: { title: string; onPress: () => voi
       style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}
       onPress={onPress}>
       <Text style={styles.secondaryButtonText}>{title}</Text>
+    </Pressable>
+  );
+}
+
+function BlueButton({ title, onPress }: { title: string; onPress: () => void }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      style={({ pressed }) => [styles.blueButton, pressed && styles.pressed]}
+      onPress={onPress}>
+      <Text style={styles.blueButtonText}>{title}</Text>
     </Pressable>
   );
 }
@@ -1358,6 +1667,20 @@ function toNumber(value: string, fallback: number) {
 
 function formatChips(amount: number) {
   return Math.floor(amount).toLocaleString();
+}
+
+function formatReportDate(timestamp: number) {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(timestamp));
+}
+
+function getConnectionStatus(player: Player) {
+  if (player.status === 'disconnected') {
+    return 'offline';
+  }
+  return Date.now() - player.lastSeenAt < 45_000 ? 'online' : 'offline';
 }
 
 function getRevealedCommunityCardCount(phase: HandPhase) {
@@ -1619,7 +1942,7 @@ const styles = StyleSheet.create({
   primaryButton: {
     minHeight: 44,
     borderRadius: 8,
-    backgroundColor: '#F4C95D',
+    backgroundColor: '#FFD275',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 15,
@@ -1646,12 +1969,28 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '900',
   },
+  blueButton: {
+    minHeight: 44,
+    borderRadius: 8,
+    backgroundColor: '#1A3A3A',
+    borderWidth: 1,
+    borderColor: '#315A5A',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+    flexGrow: 1,
+  },
+  blueButtonText: {
+    color: '#E8FFFF',
+    fontSize: 14,
+    fontWeight: '900',
+  },
   dangerButton: {
     minHeight: 44,
     borderRadius: 8,
-    backgroundColor: '#5E1D27',
+    backgroundColor: '#8E3B46',
     borderWidth: 1,
-    borderColor: '#85313D',
+    borderColor: '#B66570',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 14,
@@ -1829,14 +2168,14 @@ const styles = StyleSheet.create({
   confirmPrimaryButton: {
     minHeight: 44,
     borderRadius: 8,
-    backgroundColor: '#F4C95D',
+    backgroundColor: '#FFD275',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 14,
     flex: 1,
   },
   confirmDangerButton: {
-    backgroundColor: '#B5293B',
+    backgroundColor: '#8E3B46',
   },
   confirmPrimaryText: {
     color: '#14120A',
@@ -1859,8 +2198,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   showdownPlayerButtonSelected: {
-    backgroundColor: '#F4C95D',
-    borderColor: '#F4C95D',
+    backgroundColor: '#FFD275',
+    borderColor: '#FFD275',
   },
   showdownPlayerText: {
     color: '#F7FAF6',
@@ -1954,6 +2293,76 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '900',
   },
+  finalReportContent: {
+    paddingHorizontal: 16,
+    paddingVertical: 22,
+    gap: 14,
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
+  },
+  finalReportHero: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#FFD275',
+    backgroundColor: '#17211C',
+    padding: 18,
+    gap: 6,
+  },
+  finalReportTitle: {
+    color: '#F7FAF6',
+    fontSize: 34,
+    lineHeight: 40,
+    fontWeight: '900',
+  },
+  finalReportList: {
+    gap: 8,
+  },
+  finalReportRow: {
+    minHeight: 64,
+    borderRadius: 8,
+    backgroundColor: '#111A16',
+    borderWidth: 1,
+    borderColor: '#25382E',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 12,
+  },
+  finalReportRowWinner: {
+    borderColor: '#FFD275',
+    backgroundColor: '#1D2A19',
+  },
+  finalReportRank: {
+    color: '#FFD275',
+    fontSize: 15,
+    fontWeight: '900',
+    width: 38,
+  },
+  finalReportPlayer: {
+    flex: 1,
+    gap: 2,
+  },
+  finalReportName: {
+    color: '#F7FAF6',
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  finalReportNetPositive: {
+    color: '#37C978',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  finalReportNetNegative: {
+    color: '#FF8D7B',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  finalReportStack: {
+    color: '#FFFFFF',
+    fontSize: 17,
+    fontWeight: '900',
+  },
   pressed: {
     opacity: 0.72,
   },
@@ -2045,6 +2454,36 @@ const styles = StyleSheet.create({
     color: '#E8ECE8',
     fontWeight: '900',
     fontSize: 12,
+  },
+  kickButton: {
+    minWidth: 48,
+    minHeight: 36,
+    borderRadius: 8,
+    backgroundColor: '#8E3B46',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 9,
+  },
+  kickButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '900',
+    fontSize: 12,
+  },
+  connectionBadge: {
+    borderRadius: 6,
+    overflow: 'hidden',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  connectionBadgeOnline: {
+    color: '#101714',
+    backgroundColor: '#37C978',
+  },
+  connectionBadgeOffline: {
+    color: '#FFFFFF',
+    backgroundColor: '#8E3B46',
   },
   tableSurface: {
     backgroundColor: '#173E2B',

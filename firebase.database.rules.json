@@ -5,7 +5,7 @@
     "roomCodes": {
       "$code": {
         ".read": "auth != null",
-        ".write": "auth != null && ((!data.exists() && newData.exists()) || data.val() == newData.val() || (!newData.exists() && (!root.child('rooms').child(data.val()).exists() || (root.child('rooms').child(data.val()).child('updatedAt').isNumber() && root.child('rooms').child(data.val()).child('updatedAt').val() <= now - 3600000))))",
+        ".write": "auth != null && ((!data.exists() && newData.exists()) || data.val() == newData.val() || (!newData.exists() && root.child('rooms').child(data.val()).child('adminUid').val() == auth.uid) || (!newData.exists() && (!root.child('rooms').child(data.val()).exists() || (root.child('rooms').child(data.val()).child('updatedAt').isNumber() && root.child('rooms').child(data.val()).child('updatedAt').val() <= now - 3600000))))",
         ".validate": "$code.matches(/^[A-Z2-9]{6,8}$/) && newData.isString()"
       }
     },
@@ -93,6 +93,26 @@
         "players": {
           "$playerId": {
             ".validate": "newData.hasChildren(['id', 'name', 'seat', 'stack', 'status'])"
+          }
+        }
+      }
+    },
+    "metrics": {
+      ".read": "auth != null",
+      "roomsStartedTotal": {
+        ".write": "auth != null && newData.isNumber() && ((!data.exists() && newData.val() == 1) || (data.isNumber() && newData.val() == data.val() + 1))"
+      },
+      "startedRooms": {
+        "$roomId": {
+          ".write": "auth != null && !data.exists() && newData.hasChildren(['roomId', 'code', 'startedAt'])",
+          "roomId": {
+            ".validate": "newData.isString() && newData.val() == $roomId"
+          },
+          "code": {
+            ".validate": "newData.isString() && newData.val().matches(/^[A-Z2-9]{6,8}$/)"
+          },
+          "startedAt": {
+            ".validate": "newData.isNumber()"
           }
         }
       }

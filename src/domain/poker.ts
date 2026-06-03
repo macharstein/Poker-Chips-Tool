@@ -76,7 +76,10 @@ export type RoomEvent = {
   sequenceNumber: number;
 };
 
-export type RoomSnapshot = Pick<RoomState, 'players' | 'settings' | 'hand' | 'status'>;
+export type RoomSnapshot = Pick<
+  RoomState,
+  'players' | 'settings' | 'hand' | 'status' | 'startedAt' | 'kickedPlayerIds'
+>;
 
 export type RoomState = {
   id: string;
@@ -91,6 +94,8 @@ export type RoomState = {
   hand?: HandState;
   events: Record<string, RoomEvent>;
   undoStack: RoomSnapshot[];
+  startedAt?: number;
+  kickedPlayerIds?: Record<string, true>;
 };
 
 export type PokerAction =
@@ -108,6 +113,7 @@ export type PokerAction =
   | { type: 'ADMIN_SET_DEALER'; playerId: string }
   | { type: 'ADMIN_SET_ACTIVE_PLAYER'; playerId: string }
   | { type: 'ADMIN_TOGGLE_SITTING_OUT'; playerId: string }
+  | { type: 'ADMIN_KICK_PLAYER'; playerId: string }
   | { type: 'ADMIN_PAUSE' }
   | { type: 'ADMIN_RESUME' }
   | { type: 'ADMIN_END_HAND' }
@@ -241,6 +247,10 @@ export function applyPokerAction(room: RoomState, action: PokerAction, options: 
       requireAdmin(next, options.actorId);
       toggleSittingOut(next, action.playerId);
       break;
+    case 'ADMIN_KICK_PLAYER':
+      requireAdmin(next, options.actorId);
+      kickPlayer(next, action.playerId, now);
+      break;
     case 'ADMIN_PAUSE':
       requireAdmin(next, options.actorId);
       if (next.status === 'active') {
@@ -334,6 +344,13 @@ export function getShowdownPots(room: RoomState): ShowdownPot[] {
 }
 
 function joinRoom(room: RoomState, action: Extract<PokerAction, { type: 'JOIN_ROOM' }>, now: number) {
+  if (room.kickedPlayerIds?.[action.playerId]) {
+    if (room.status !== 'lobby') {
+      throw new Error('You were removed from this hand. Rejoin after the lobby opens.');
+    }
+    delete room.kickedPlayerIds[action.playerId];
+  }
+
   if (room.status !== 'lobby' && room.players[action.playerId]) {
     room.players[action.playerId].status = 'active';
     room.players[action.playerId].lastSeenAt = now;
@@ -382,12 +399,14 @@ function addGuestPlayer(
 
 function startHand(room: RoomState, now: number) {
   requireLobbyOrComplete(room);
+  room.startedAt ??= now;
   const eligible = getOrderedPlayers(room).filter(
     (player) =>
       player.stack > 0 &&
       player.status !== 'sittingOut' &&
       player.status !== 'disconnected' &&
-      player.status !== 'out'
+      player.status !== 'out' &&
+      !room.kickedPlayerIds?.[player.id]
   );
   if (eligible.length < 2) {
     throw new Error('At least two seated players are required.');
@@ -580,6 +599,28 @@ function toggleSittingOut(room: RoomState, playerId: string) {
   player.status = player.status === 'sittingOut' ? 'active' : 'sittingOut';
 }
 
+function kickPlayer(room: RoomState, playerId: string, now: number) {
+  if (playerId === room.adminUid) {
+    throw new Error('The room creator cannot be kicked.');
+  }
+
+  const player = requirePlayer(room, playerId);
+  room.kickedPlayerIds ??= {};
+  room.kickedPlayerIds[playerId] = true;
+
+  if (room.status !== 'active' || !room.hand) {
+    delete room.players[playerId];
+    return;
+  }
+
+  player.status = 'folded';
+  room.hand.actedThisStreet[playerId] = true;
+  if (room.hand.activePlayerId === playerId) {
+    room.hand.activePlayerId = null;
+  }
+  settleOrAdvance(room, now);
+}
+
 function settleOrAdvance(room: RoomState, now: number) {
   const hand = requireHand(room);
   const contenders = getNonFoldedHandPlayers(room);
@@ -657,6 +698,9 @@ function completeHand(room: RoomState, now: number) {
       player.status = 'out';
     }
   });
+  Object.keys(room.kickedPlayerIds ?? {}).forEach((playerId) => {
+    delete room.players[playerId];
+  });
 }
 
 function undoLastAction(
@@ -675,6 +719,8 @@ function undoLastAction(
   next.settings = previous.settings;
   next.hand = previous.hand;
   next.status = previous.status;
+  next.startedAt = previous.startedAt;
+  next.kickedPlayerIds = previous.kickedPlayerIds;
   next.undoStack = next.undoStack.slice(0, -1);
   return commit(next, action, options.actorId, undefined, options.now ?? Date.now());
 }
@@ -727,6 +773,8 @@ function createSnapshot(room: RoomState): RoomSnapshot {
     players: clone(room.players),
     settings: clone(room.settings),
     status: room.status,
+    startedAt: room.startedAt,
+    kickedPlayerIds: clone(room.kickedPlayerIds),
   };
   if (room.hand) {
     snapshot.hand = clone(room.hand);
@@ -784,6 +832,7 @@ function normalizeRoomState(room: RoomState): RoomState {
   normalized.players ??= {};
   normalized.events ??= {};
   normalized.undoStack = Array.isArray(normalized.undoStack) ? normalized.undoStack : [];
+  normalized.kickedPlayerIds ??= {};
 
   Object.values(normalized.players).forEach((player, index) => {
     player.name = sanitizeName(player.name ?? 'Player');

@@ -60,7 +60,7 @@ const localListeners: Record<string, Set<(room: RoomState | null) => void>> = {}
 const LOCAL_STATE_KEY = 'pocket-poker-chips.local-state.v1';
 const LOCAL_CHANNEL_NAME = 'pocket-poker-chips.local-rooms';
 const ROOM_INACTIVITY_TIMEOUT_MS = 60 * 60 * 1000;
-const ROOM_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
+const ROOM_HEARTBEAT_INTERVAL_MS = 20 * 1000;
 const CLEANUP_THROTTLE_MS = 5 * 60 * 1000;
 
 let localUserCounter = 0;
@@ -238,6 +238,9 @@ export async function dispatchRoomAction(params: {
     if (!result.committed) {
       throw new Error('Action was rejected because the room changed.');
     }
+    if (params.action.type === 'START_HAND') {
+      await recordRoomStartedOnce(result.snapshot.val() as RoomState);
+    }
     return;
   }
 
@@ -254,6 +257,65 @@ export async function dispatchRoomAction(params: {
 export async function leaveRoom(params: { roomId: string; mode: TransportMode }) {
   if (params.mode === 'p2p') {
     await leaveHostedRoom({ roomId: params.roomId });
+  }
+}
+
+export async function endRoomAndDelete(params: {
+  roomId: string;
+  code: string;
+  mode: TransportMode;
+}) {
+  if (params.mode === 'p2p') {
+    await leaveHostedRoom({ roomId: params.roomId });
+    return;
+  }
+
+  if (params.mode === 'firebase') {
+    const database = getDatabase(getFirebaseApp());
+    await update(ref(database), {
+      [`rooms/${params.roomId}`]: null,
+      [`roomCodes/${normalizeCode(params.code)}`]: null,
+    });
+    return;
+  }
+
+  ensureLocalHydrated();
+  delete localRooms[params.roomId];
+  delete localRoomCodes[normalizeCode(params.code)];
+  persistLocalState();
+  emitLocalRoom(params.roomId);
+}
+
+export async function recordRoomStartedOnce(room: RoomState | null | undefined) {
+  if (!room?.id) {
+    return;
+  }
+
+  const configStatus = getFirebaseConfigStatus();
+  if (!configStatus.configured || getOnlineTransportMode() !== 'firebase') {
+    return;
+  }
+
+  const database = getDatabase(getFirebaseApp());
+  const startedAt = room.startedAt ?? room.hand?.startedAt ?? Date.now();
+  let createdMarker = false;
+  const markerResult = await runTransaction(ref(database, `metrics/startedRooms/${room.id}`), (current) => {
+    if (current) {
+      createdMarker = false;
+      return undefined;
+    }
+    createdMarker = true;
+    return {
+      roomId: room.id,
+      code: room.code,
+      startedAt,
+    };
+  });
+
+  if (markerResult.committed && createdMarker) {
+    await runTransaction(ref(database, 'metrics/roomsStartedTotal'), (current) =>
+      typeof current === 'number' ? current + 1 : 1
+    );
   }
 }
 
@@ -290,10 +352,24 @@ export async function attachPresence(params: {
   const database = getDatabase(getFirebaseApp());
   const playerRef = ref(database, `rooms/${params.roomId}/players/${params.playerId}`);
   const roomRef = ref(database, `rooms/${params.roomId}`);
-  const touchRoom = () => update(roomRef, { updatedAt: Date.now() }).catch(() => undefined);
-  await update(playerRef, { status: 'active', lastSeenAt: Date.now() });
-  await touchRoom();
-  const heartbeat = setInterval(touchRoom, ROOM_HEARTBEAT_INTERVAL_MS);
+  const touchPresence = () => {
+    const now = Date.now();
+    return Promise.all([
+      update(roomRef, { updatedAt: now }),
+      runTransaction(playerRef, (current) => {
+        if (!current) {
+          return current;
+        }
+        return {
+          ...current,
+          status: current.status === 'disconnected' ? 'active' : current.status,
+          lastSeenAt: now,
+        };
+      }),
+    ]).catch(() => undefined);
+  };
+  await touchPresence();
+  const heartbeat = setInterval(touchPresence, ROOM_HEARTBEAT_INTERVAL_MS);
   const disconnect = onDisconnect(playerRef);
   await disconnect.update({ status: 'disconnected', lastSeenAt: serverTimestamp() });
   return () => {

@@ -29,8 +29,8 @@ export default function EntryScreen() {
   const params = useLocalSearchParams<{ code?: string }>();
   const configStatus = useMemo(() => getFirebaseConfigStatus(), []);
   const initialJoinCode = parseRoomCode(firstParam(params.code));
-  const [adminName, setAdminName] = useState('Host');
-  const [joinName, setJoinName] = useState('Player');
+  const [adminName, setAdminName] = useState('');
+  const [joinName, setJoinName] = useState('');
   const [joinCode, setJoinCode] = useState(initialJoinCode);
   const [startingStack, setStartingStack] = useState('5000');
   const [smallBlind, setSmallBlind] = useState('25');
@@ -39,6 +39,8 @@ export default function EntryScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingMessage, setPendingMessage] = useState('');
   const [error, setError] = useState('');
+  const canCreate = adminName.trim().length > 0 && !isSubmitting;
+  const canJoin = joinName.trim().length > 0 && joinCode.trim().length > 0 && !isSubmitting;
 
   useEffect(() => {
     void cleanupInactiveRooms().catch(() => undefined);
@@ -60,6 +62,11 @@ export default function EntryScreen() {
   };
 
   const handleCreate = async () => {
+    const name = adminName.trim();
+    if (!name) {
+      setError('Enter your name before creating a room.');
+      return;
+    }
     setIsSubmitting(true);
     setPendingMessage(
       configStatus.defaultMode === 'p2p' ? 'Creating hosted room in Firebase...' : 'Creating room...'
@@ -67,7 +74,7 @@ export default function EntryScreen() {
     setError('');
     try {
       const session = await createRoom({
-        adminName,
+        adminName: name,
         settings: {
           startingStack: toNumber(startingStack, 5000),
           smallBlind: toNumber(smallBlind, 25),
@@ -85,13 +92,18 @@ export default function EntryScreen() {
   };
 
   const handleJoin = async () => {
+    const name = joinName.trim();
+    if (!name) {
+      setError('Enter your name before joining a room.');
+      return;
+    }
     setIsSubmitting(true);
     setPendingMessage(
       configStatus.defaultMode === 'p2p' ? 'Finding host and connecting...' : 'Joining room...'
     );
     setError('');
     try {
-      const session = await joinRoom({ code: joinCode, playerName: joinName });
+      const session = await joinRoom({ code: joinCode, playerName: name });
       openRoom(session);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not join the room.');
@@ -145,7 +157,12 @@ export default function EntryScreen() {
                 />
               </View>
 
-              <LabeledInput label="Host name" value={adminName} onChangeText={setAdminName} />
+              <LabeledInput
+                label="Your name"
+                value={adminName}
+                onChangeText={setAdminName}
+                placeholder="Your name"
+              />
               <View style={styles.formGrid}>
                 <LabeledInput
                   label="Starting stack"
@@ -173,7 +190,7 @@ export default function EntryScreen() {
                 />
               </View>
 
-              <PrimaryButton title="Create room" onPress={handleCreate} disabled={isSubmitting} />
+              <PrimaryButton title="Create room" onPress={handleCreate} disabled={!canCreate} />
             </View>
 
             <View style={styles.panel}>
@@ -191,7 +208,12 @@ export default function EntryScreen() {
                 </Pressable>
               </View>
 
-              <LabeledInput label="Player name" value={joinName} onChangeText={setJoinName} />
+              <LabeledInput
+                label="Your name"
+                value={joinName}
+                onChangeText={setJoinName}
+                placeholder="Your name"
+              />
               <LabeledInput
                 label="Room code"
                 value={joinCode}
@@ -199,7 +221,7 @@ export default function EntryScreen() {
                 autoCapitalize="characters"
                 maxLength={8}
               />
-              <PrimaryButton title="Join room" onPress={handleJoin} disabled={isSubmitting} />
+              <PrimaryButton title="Join room" onPress={handleJoin} disabled={!canJoin} />
             </View>
 
             {error ? <Text style={styles.errorText}>{error}</Text> : null}
@@ -297,9 +319,9 @@ const styles = StyleSheet.create({
     width: 58,
     height: 58,
     borderRadius: 29,
-    backgroundColor: '#B5293B',
+    backgroundColor: '#8E3B46',
     borderWidth: 4,
-    borderColor: '#F4C95D',
+    borderColor: '#FFD275',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -313,7 +335,7 @@ const styles = StyleSheet.create({
     gap: 3,
   },
   kicker: {
-    color: '#F4C95D',
+    color: '#FFD275',
     fontSize: 12,
     fontWeight: '800',
     textTransform: 'uppercase',
@@ -402,7 +424,7 @@ const styles = StyleSheet.create({
   primaryButton: {
     minHeight: 48,
     borderRadius: 8,
-    backgroundColor: '#F4C95D',
+    backgroundColor: '#FFD275',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 18,

@@ -14,6 +14,7 @@ import {
 import {
   applyPokerAction,
   createRoomState,
+  normalizeRoomState,
   type PokerAction,
   type RoomSettings,
   type RoomState,
@@ -153,33 +154,38 @@ export function subscribeRoom(
   roomId: string,
   mode: TransportMode,
   onRoom: (room: RoomState | null) => void,
-  context?: HostedRoomSubscribeContext
+  context?: HostedRoomSubscribeContext,
+  onError?: (error: Error) => void
 ): RoomSubscription {
+  const emitRoom = (room: RoomState | null) => onRoom(normalizeRepositoryRoom(room));
+
   if (mode === 'p2p') {
     return subscribeHostedRoom({
       roomId,
       database: getDatabase(getFirebaseApp()),
       getUserId: getFirebaseUserId,
       context,
-      onRoom,
+      onRoom: emitRoom,
     });
   }
 
   if (mode === 'firebase') {
     const database = getDatabase(getFirebaseApp());
     const unsubscribe = onValue(ref(database, `rooms/${roomId}`), (snapshot) => {
-      onRoom(snapshot.val() as RoomState | null);
+      emitRoom(snapshot.val() as RoomState | null);
+    }, (error) => {
+      onError?.(error);
     });
     return { unsubscribe };
   }
 
   ensureLocalHydrated();
   localListeners[roomId] ??= new Set();
-  localListeners[roomId].add(onRoom);
-  onRoom(clone(localRooms[roomId] ?? null));
+  localListeners[roomId].add(emitRoom);
+  emitRoom(clone(localRooms[roomId] ?? null));
   return {
     unsubscribe: () => {
-      localListeners[roomId]?.delete(onRoom);
+      localListeners[roomId]?.delete(emitRoom);
     },
   };
 }
@@ -634,6 +640,10 @@ function getTransportLabel(mode: TransportMode) {
     case 'local':
       return 'Local demo mode';
   }
+}
+
+function normalizeRepositoryRoom(room: RoomState | null) {
+  return room ? normalizeRoomState(room) : null;
 }
 
 function queueInactiveRoomCleanup(configStatus = getFirebaseConfigStatus()) {

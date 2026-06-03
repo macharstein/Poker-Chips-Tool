@@ -1,4 +1,4 @@
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, type ErrorBoundaryProps } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import type { ComponentProps } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -37,6 +37,7 @@ import {
   endRoomAndDelete,
   leaveRoom,
   subscribeRoom,
+  type RoomSubscription,
   type RoomRole,
   type TransportMode,
 } from '@/services/roomRepository';
@@ -63,6 +64,25 @@ type ConfirmState = {
   danger?: boolean;
   onConfirm: () => void;
 };
+
+export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
+  const router = useRouter();
+
+  return (
+    <View style={styles.screen}>
+      <SafeAreaView style={styles.centerState}>
+        <Text style={styles.sectionTitle}>Room failed to load</Text>
+        <Text style={styles.mutedText}>
+          {error.message || 'The room screen hit an unexpected error.'}
+        </Text>
+        <View style={styles.buttonRow}>
+          <PrimaryButton title="Try again" onPress={() => void retry()} />
+          <SecondaryButton title="Back home" onPress={() => router.replace('/')} />
+        </View>
+      </SafeAreaView>
+    </View>
+  );
+}
 
 export default function RoomScreen() {
   const router = useRouter();
@@ -102,26 +122,36 @@ export default function RoomScreen() {
       return;
     }
 
-    const subscription = subscribeRoom(
-      roomId,
-      mode,
-      (nextRoom) => {
-        if (nextRoom) {
-          roomLoadedRef.current = true;
-          setRoomEnded(false);
-        } else if (roomLoadedRef.current) {
-          setRoomEnded(true);
-        }
-        setRoom(nextRoom);
-      },
-      {
-        actorId,
-        code,
-        role,
-        peerId,
-        hostPeerId,
-      }
-    );
+    let subscription: RoomSubscription = { unsubscribe: () => undefined };
+    let setupErrorTimer: ReturnType<typeof setTimeout> | undefined;
+    roomLoadedRef.current = false;
+    try {
+      subscription = subscribeRoom(
+        roomId,
+        mode,
+        (nextRoom) => {
+          if (nextRoom) {
+            roomLoadedRef.current = true;
+            setRoomEnded(false);
+            setError('');
+          } else if (roomLoadedRef.current) {
+            setRoomEnded(true);
+          }
+          setRoom(nextRoom);
+        },
+        {
+          actorId,
+          code,
+          role,
+          peerId,
+          hostPeerId,
+        },
+        (caught) => setError(formatError(caught, 'Could not read this room.'))
+      );
+    } catch (caught) {
+      const message = formatError(caught, 'Could not open this room.');
+      setupErrorTimer = setTimeout(() => setError(message), 0);
+    }
     let detachPresence: (() => void) | undefined;
     let cancelled = false;
     if (actorId) {
@@ -138,10 +168,26 @@ export default function RoomScreen() {
 
     return () => {
       cancelled = true;
+      if (setupErrorTimer) {
+        clearTimeout(setupErrorTimer);
+      }
       detachPresence?.();
       subscription.unsubscribe();
     };
   }, [actorId, code, hostPeerId, mode, peerId, role, roomId]);
+
+  useEffect(() => {
+    if (!roomId || room || roomEnded || error) {
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      setError(
+        'Room is taking longer than expected to open. Check that Firebase rules are published and that this room still exists.'
+      );
+    }, 12000);
+    return () => clearTimeout(timeout);
+  }, [error, room, roomEnded, roomId]);
 
   const players = useMemo(() => (room ? getOrderedPlayers(room) : []), [room]);
   const visiblePlayers = useMemo(
@@ -221,8 +267,11 @@ export default function RoomScreen() {
     return (
       <View style={styles.screen}>
         <SafeAreaView style={styles.centerState}>
-          <ActivityIndicator color="#F4C95D" />
-          <Text style={styles.mutedText}>Opening room...</Text>
+          {error ? null : <ActivityIndicator color="#F4C95D" />}
+          <Text style={error ? styles.errorText : styles.mutedText}>
+            {error || 'Opening room...'}
+          </Text>
+          {error ? <SecondaryButton title="Back home" onPress={() => router.replace('/')} /> : null}
         </SafeAreaView>
       </View>
     );
@@ -1637,10 +1686,10 @@ function firstParam(value: string | string[] | undefined) {
 }
 
 function normalizeMode(value: string): TransportMode {
-  if (value === 'p2p' || value === 'firebase') {
+  if (value === 'p2p' || value === 'firebase' || value === 'local') {
     return value;
   }
-  return 'local';
+  return 'firebase';
 }
 
 function normalizeRole(value: string): RoomRole | undefined {
@@ -1674,6 +1723,10 @@ function formatReportDate(timestamp: number) {
     dateStyle: 'medium',
     timeStyle: 'short',
   }).format(new Date(timestamp));
+}
+
+function formatError(caught: unknown, fallback: string) {
+  return caught instanceof Error && caught.message ? caught.message : fallback;
 }
 
 function getConnectionStatus(player: Player) {

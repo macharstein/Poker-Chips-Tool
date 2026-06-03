@@ -47,17 +47,33 @@ export default function EntryScreen() {
   }, []);
 
   const openRoom = (session: RoomSession) => {
+    const roomParams: {
+      roomId: string;
+      playerId: string;
+      mode: RoomSession['mode'];
+      code: string;
+      role?: NonNullable<RoomSession['role']>;
+      peerId?: string;
+      hostPeerId?: string;
+    } = {
+      roomId: session.roomId,
+      playerId: session.playerId,
+      mode: session.mode,
+      code: session.code,
+    };
+    if (session.role) {
+      roomParams.role = session.role;
+    }
+    if (session.peerId) {
+      roomParams.peerId = session.peerId;
+    }
+    if (session.hostPeerId) {
+      roomParams.hostPeerId = session.hostPeerId;
+    }
+
     router.push({
       pathname: '/room/[roomId]',
-      params: {
-        roomId: session.roomId,
-        playerId: session.playerId,
-        mode: session.mode,
-        code: session.code,
-        role: session.role,
-        peerId: session.peerId,
-        hostPeerId: session.hostPeerId,
-      },
+      params: roomParams,
     });
   };
 

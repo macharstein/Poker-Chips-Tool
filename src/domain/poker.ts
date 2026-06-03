@@ -273,7 +273,7 @@ export function applyPokerAction(room: RoomState, action: PokerAction, options: 
 }
 
 export function getOrderedPlayers(room: RoomState) {
-  return Object.values(room.players).sort((a, b) => a.seat - b.seat);
+  return Object.values(room.players ?? {}).sort((a, b) => a.seat - b.seat);
 }
 
 export function getActivePlayers(room: RoomState) {
@@ -822,7 +822,7 @@ function normalizeSettings(settings: RoomSettings): RoomSettings {
   };
 }
 
-function normalizeRoomState(room: RoomState): RoomState {
+export function normalizeRoomState(room: RoomState): RoomState {
   const normalized = cloneRoom(room);
   normalized.status ??= 'lobby';
   normalized.version = Number.isFinite(normalized.version) ? normalized.version : 0;
